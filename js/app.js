@@ -1,11 +1,15 @@
 import { load, save, uid, newCharacter, exportJson, importJson, requestPersistence } from './store.js';
 import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js';
 import { fetchSpell } from './import.js';
+import {
+  ABILITIES, ABIL_SHORT, SKILLS, SIZES, COINS, COIN_NAME, mod, fmtMod, profBonus, skillBonus, saveBonus,
+  capacity, jumps, carried, coinsTotal, itemsValue, fmtNum, restoreHitDice,
+} from './rules.js';
 
-const APP_VERSION = 'v9'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v10'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
-const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false };
+const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const view = $('#view');
@@ -46,7 +50,9 @@ function render() {
   document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === ui.tab));
   if (ui.tab === 'spells') renderSpells();
   else if (ui.tab === 'tracker') renderTracker();
+  else if (ui.tab === 'sheet') renderSheet();
   else if (ui.tab === 'inventory') renderInventory();
+  else if (ui.tab === 'notes') renderNotes();
   else renderCharacter();
 }
 
@@ -207,6 +213,36 @@ function renderTracker() {
     }).join('') + (c.pact.max ? `<div class="slot-row"><span class="lvl">Колдун<br><span class="small muted">${c.pact.level} ур.</span></span><div class="dots">${dots(c.pact.max, c.pact.used, 'pact')}</div><span class="count">${c.pact.max - c.pact.used}/${c.pact.max}</span></div>` : '');
   }
 
+  const conMod = mod(c.abilities.con);
+  let hdHtml;
+  if (ui.editHD) {
+    hdHtml = c.hitDice.map((h, i) => `
+      <div class="slot-row">
+        <select class="hd-die" data-hd-die="${i}">${[6, 8, 10, 12].map((d) => `<option value="${d}" ${h.die === d ? 'selected' : ''}>к${d}</option>`).join('')}</select>
+        <span class="grow small muted">количество</span>
+        <div class="stepper">
+          <button class="btn small icon" data-action="hd-max" data-i="${i}" data-d="-1">−</button>
+          <span class="val">${h.max}</span>
+          <button class="btn small icon" data-action="hd-max" data-i="${i}" data-d="1">＋</button>
+        </div>
+        ${c.hitDice.length > 1 ? `<button class="btn small icon danger" data-action="hd-del" data-i="${i}">×</button>` : ''}
+      </div>`).join('') + `
+      <div class="row wrap" style="margin-top:8px">
+        <button class="btn small" data-action="hd-add">＋ Другой тип костей</button>
+        <button class="btn small" data-action="hd-level">По уровню (${c.level})</button>
+      </div>
+      <div class="hint">Несколько типов костей — для мультикласса.</div>`;
+  } else {
+    hdHtml = c.hitDice.map((h, i) => `
+      <div class="slot-row">
+        <span class="lvl">к${h.die}</span>
+        <div class="dots">${dots(h.max, h.used, 'hd', `data-i="${i}"`)}</div>
+        <span class="count">${h.max - h.used}/${h.max}</span>
+        <button class="btn small" data-action="hd-roll" data-i="${i}" ${h.used >= h.max ? 'disabled' : ''}>🎲</button>
+      </div>`).join('') + `<div class="hint">🎲 — бросить кость ${fmtMod(conMod)} (ТЕЛ) и восстановить хиты. Кружок — отметить без броска.
+        Длинный отдых возвращает ${c.edition === '2024' ? 'все кости' : 'половину костей'}.</div>`;
+  }
+
   const resetName = { short: 'кор. отдых', long: 'дл. отдых', none: 'вручную' };
   const resHtml = c.resources.length ? c.resources.map((r) => `
     <div class="res">
@@ -218,7 +254,7 @@ function renderTracker() {
       <button class="btn icon" data-action="res" data-id="${r.id}" data-d="-1">−</button>
       <div class="val" data-action="res-set" data-id="${r.id}">${r.cur}<small>/${r.max}</small></div>
       <button class="btn icon" data-action="res" data-id="${r.id}" data-d="1">＋</button>
-    </div>`).join('') : `<div class="muted small">Здесь можно отслеживать кости хитов, ярость, канал божественности, вдохновение и т.д.</div>`;
+    </div>`).join('') : `<div class="muted small">Здесь можно отслеживать ярость, канал божественности, вдохновение, заряды предметов и т.д.</div>`;
 
   view.innerHTML = `
     <div class="rest-row">
@@ -246,6 +282,12 @@ function renderTracker() {
     </div>
 
     <div class="card">
+      <h3>Кости хитов <span class="spacer"></span>
+        <button class="btn link small" data-action="toggle-edit-hd">${ui.editHD ? 'Готово' : '✎'}</button></h3>
+      ${hdHtml}
+    </div>
+
+    <div class="card">
       <h3>Ячейки заклинаний <span class="spacer"></span>
         <button class="btn link small" data-action="toggle-edit-slots">${ui.editSlots ? 'Готово' : '✎'}</button></h3>
       ${slotsHtml}
@@ -259,19 +301,206 @@ function renderTracker() {
     </div>`;
 }
 
+function loadCard(c) {
+  const cap = capacity(c);
+  const w = carried(c);
+  const pct = cap.carry ? Math.min(100, (w.total / cap.carry) * 100) : 0;
+  let status = '';
+  if (w.total > cap.carry) status = `<div class="err">Перегруз: превышена грузоподъёмность на ${fmtNum(w.total - cap.carry)} фнт.</div>`;
+  else if (w.total > cap.heavy) status = '<div class="hint">По варианту правил «Нагрузка»: сильная нагрузка (скорость −20 фт., помеха).</div>';
+  else if (w.total > cap.encumbered) status = '<div class="hint">По варианту правил «Нагрузка»: нагружен (скорость −10 фт.).</div>';
+  return `
+    <div class="card">
+      <h3>Груз</h3>
+      <div class="load-main"><b>${fmtNum(w.total)}</b> из ${fmtNum(cap.carry)} фнт.</div>
+      <div class="hp-bar"><div class="fill ${w.total > cap.carry ? 'low' : ''}" style="width:${pct}%"></div></div>
+      <div class="small muted">Предметы ${fmtNum(w.items)} фнт.${c.coinsWeight ? ` · монеты ${fmtNum(w.coins)} фнт.` : ''}
+        · толкать/тянуть/поднимать до ${fmtNum(cap.push)} фнт.</div>
+      ${status}
+    </div>`;
+}
+
 function renderInventory() {
+  const c = char();
+  const total = coinsTotal(c.coins);
+  const value = itemsValue(c);
+  const items = c.items.map((it) => {
+    const meta = [
+      Number(it.weight) ? `${fmtNum(it.weight)} фнт.` : '',
+      Number(it.cost) ? `${fmtNum(it.cost)} ${COIN_NAME[it.cur] || 'зм'}` : '',
+    ].filter(Boolean).join(' · ');
+    return `
+    <div class="item">
+      <div class="info" data-action="edit-item" data-id="${it.id}">
+        <div class="name">${esc(it.name)}</div>
+        ${meta || it.note ? `<div class="small muted">${esc(meta)}${meta && it.note ? ' · ' : ''}${esc(it.note || '')}</div>` : ''}
+      </div>
+      <button class="btn small icon" data-action="item-qty" data-id="${it.id}" data-d="-1">−</button>
+      <span class="qty">${fmtNum(it.qty)}</span>
+      <button class="btn small icon" data-action="item-qty" data-id="${it.id}" data-d="1">＋</button>
+    </div>`;
+  }).join('');
+
+  view.innerHTML = `
+    ${loadCard(c)}
+
+    <div class="card">
+      <h3>Монеты <span class="spacer"></span><span class="small muted">≈ ${fmtNum(total)} зм</span></h3>
+      <div class="coins">
+        ${COINS.map(([k, n]) => `<label><span>${n}</span><input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-coin="${k}" value="${c.coins[k] || 0}"></label>`).join('')}
+      </div>
+      <label class="check" style="margin:10px 0 0"><input type="checkbox" data-sheet="coinsWeight" ${c.coinsWeight ? 'checked' : ''}> Учитывать вес монет (50 шт. = 1 фнт.)</label>
+    </div>
+
+    <div class="card">
+      <h3>Предметы <span class="spacer"></span><button class="btn link small" data-action="add-item">＋ Добавить</button></h3>
+      ${items || '<div class="muted small">Пока пусто. Нажмите «＋ Добавить».</div>'}
+      ${c.items.length ? `<div class="item-total">Итого: ${fmtNum(carried(c).items)} фнт. · ${fmtNum(value)} зм</div>` : ''}
+      ${c.items.length ? '<div class="hint">Нажмите на предмет, чтобы изменить вес, цену или удалить.</div>' : ''}
+    </div>
+
+    <div class="card">
+      <h3>Прочее <span class="spacer"></span><span class="small muted" id="inventorySaved"></span></h3>
+      <textarea data-text="inventory" class="autogrow" data-min="120" placeholder="Что угодно текстом">${esc(c.inventory)}</textarea>
+    </div>`;
+  view.querySelectorAll('textarea.autogrow').forEach(autoGrow);
+}
+
+function renderNotes() {
   view.innerHTML = `
     <div class="card inv">
-      <h3>Инвентарь <span class="spacer"></span><span class="small muted" id="invSaved"></span></h3>
-      <textarea id="invText" placeholder="Длинный меч&#10;Кожаный доспех&#10;Зелье лечения ×2&#10;Верёвка 50 фт&#10;Золото: 35 зм">${esc(char().inventory)}</textarea>
-      <div class="hint">Пишите как удобно — сохраняется автоматически.</div>
+      <h3>Заметки <span class="spacer"></span><span class="small muted" id="notesSaved"></span></h3>
+      <textarea data-text="notes" class="autogrow" data-min="400" placeholder="Сюжет, имена NPC, квесты, долги таверне…">${esc(char().notes)}</textarea>
+      <div class="hint">Сохраняется автоматически.</div>
     </div>`;
-  autoGrow($('#invText'));
+  view.querySelectorAll('textarea.autogrow').forEach(autoGrow);
 }
 
 function autoGrow(t) {
   t.style.height = 'auto';
-  t.style.height = Math.max(t.scrollHeight + 2, 300) + 'px';
+  t.style.height = Math.max(t.scrollHeight + 2, Number(t.dataset.min) || 300) + 'px';
+}
+
+function renderSheet() {
+  const c = char();
+  const pb = profBonus(c.level);
+  const cap = capacity(c);
+  const w = carried(c);
+  const j = jumps(c);
+  const marker = (lvl) => `<span class="prof p${lvl}"></span>`;
+  view.innerHTML = `
+    <div class="card">
+      <h3>Характеристики</h3>
+      <div class="abil-grid">
+        ${ABILITIES.map(([k, short]) => `
+          <button class="abil" data-action="abil" data-a="${k}">
+            <span class="abil-name">${short}</span>
+            <span class="abil-mod">${fmtMod(mod(c.abilities[k]))}</span>
+            <span class="abil-score">${c.abilities[k]}</span>
+          </button>`).join('')}
+      </div>
+      <div class="stat-grid">
+        <div><span>${fmtMod(pb)}</span>Бонус мастерства</div>
+        <div><span>${fmtMod(mod(c.abilities.dex))}</span>Инициатива</div>
+        <div><span>${10 + skillBonus(c, 'perception', 'wis')}</span>Пасс. внимат.</div>
+      </div>
+      <div class="hint">Нажмите на характеристику, чтобы изменить значение. Бонус мастерства — по уровню персонажа (${c.level}).</div>
+    </div>
+
+    <div class="card">
+      <h3>Спасброски</h3>
+      ${ABILITIES.map(([k, , name]) => `
+        <div class="skill" data-action="save-toggle" data-a="${k}">
+          ${marker(c.saves[k] ? 1 : 0)}<span class="grow">${name}</span><b>${fmtMod(saveBonus(c, k))}</b>
+        </div>`).join('')}
+    </div>
+
+    <div class="card">
+      <h3>Навыки</h3>
+      ${SKILLS.map(([k, name, a]) => `
+        <div class="skill" data-action="skill" data-k="${k}">
+          ${marker(c.skills[k] || 0)}<span class="grow">${name} <span class="muted small">${ABIL_SHORT[a]}</span></span><b>${fmtMod(skillBonus(c, k, a))}</b>
+        </div>`).join('')}
+      <label class="check" style="margin:10px 0 0"><input type="checkbox" data-sheet="jack" ${c.jack ? 'checked' : ''}> Мастер на все руки (+½ бонуса мастерства к навыкам без владения)</label>
+      <div class="hint">Нажатие по навыку: нет → владение ● → компетентность ◉.</div>
+    </div>
+
+    <div class="card">
+      <h3>Грузоподъёмность и прыжки</h3>
+      <div class="grid2">
+        <label class="field"><span>Размер</span><select data-sheet="size">
+          ${SIZES.map(([k, n]) => `<option value="${k}" ${c.size === k ? 'selected' : ''}>${n}</option>`).join('')}
+        </select></label>
+        <label class="check" style="align-self:end;margin-bottom:18px"><input type="checkbox" data-sheet="powerfulBuild" ${c.powerfulBuild ? 'checked' : ''}> Мощное телосложение</label>
+      </div>
+      <dl class="props">
+        <dt>Грузоподъёмность</dt><dd><b>${fmtNum(cap.carry)} фнт.</b> (Сила × 15)</dd>
+        <dt>Несёте сейчас</dt><dd><a href="#" data-action="tab" data-tab="inventory">${fmtNum(w.total)} фнт.</a>${w.total > cap.carry ? ' — <span class="err">перегруз</span>' : ''}</dd>
+        <dt>Толкать, тянуть</dt><dd>до ${fmtNum(cap.push)} фнт.</dd>
+        <dt>Прыжок в длину</dt><dd>${j.longRun} фт. с разбега · ${j.longStand} фт. с места</dd>
+        <dt>Прыжок в высоту</dt><dd>${j.highRun} фт. с разбега · ${j.highStand} фт. с места</dd>
+      </dl>
+      <div class="hint">Разбег — не менее 10 фт. перед прыжком. Всё считается от Силы.</div>
+    </div>`;
+}
+
+function openItemForm(item) {
+  const isNew = !item;
+  item = item || { name: '', qty: 1, weight: '', cost: '', cur: 'gp', note: '' };
+  openSheet(`
+    <h2>${isNew ? 'Новый предмет' : 'Предмет'}<button class="btn icon x" data-action="close">×</button></h2>
+    <form id="itemForm">
+      <label class="field"><span>Название</span><input type="text" name="name" value="${esc(item.name)}" placeholder="Длинный меч" required></label>
+      <div class="grid2">
+        <label class="field"><span>Количество</span><input type="text" inputmode="decimal" autocomplete="off" name="qty" value="${item.qty}"></label>
+        <label class="field"><span>Вес за 1 шт., фнт.</span><input type="text" inputmode="decimal" autocomplete="off" name="weight" value="${item.weight}" placeholder="0"></label>
+      </div>
+      <div class="grid2">
+        <label class="field"><span>Цена за 1 шт.</span><input type="text" inputmode="decimal" autocomplete="off" name="cost" value="${item.cost}" placeholder="0"></label>
+        <label class="field"><span>Монета</span><select name="cur">
+          ${COINS.map(([k, n]) => `<option value="${k}" ${item.cur === k ? 'selected' : ''}>${n}</option>`).join('')}
+        </select></label>
+      </div>
+      <label class="field"><span>Заметка</span><input type="text" name="note" value="${esc(item.note || '')}" placeholder="1к8 рубящий, универсальное"></label>
+      <button class="btn primary block" type="submit">Сохранить</button>
+      ${isNew ? '' : '<button class="btn danger block" type="button" id="itemDel" style="margin-top:8px">Удалить предмет</button>'}
+    </form>`);
+  const num = (v) => {
+    const n = parseFloat(String(v).replace(',', '.'));
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  };
+  $('#itemForm').onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const c = char();
+    const data = {
+      ...item,
+      name: String(fd.get('name')).trim(),
+      qty: num(fd.get('qty')),
+      weight: num(fd.get('weight')),
+      cost: num(fd.get('cost')),
+      cur: fd.get('cur'),
+      note: String(fd.get('note') || '').trim(),
+    };
+    if (!data.name) return;
+    if (isNew) {
+      data.id = uid();
+      c.items.push(data);
+    } else {
+      c.items[c.items.findIndex((x) => x.id === item.id)] = data;
+    }
+    closeSheet();
+    commit();
+  };
+  if (!isNew) {
+    $('#itemDel').onclick = () => {
+      if (!confirm(`Удалить «${item.name}»?`)) return;
+      const c = char();
+      c.items = c.items.filter((x) => x.id !== item.id);
+      closeSheet();
+      commit();
+    };
+  }
 }
 
 function renderCharacter() {
@@ -703,6 +932,45 @@ const actions = {
   'pact-level': (d) => { const p = char().pact; p.level = clamp(p.level + Number(d.d), 1, 9); commit(); },
   'auto-slots': (d) => { autoSlots(d.kind); commit(); },
 
+  'toggle-edit-hd': () => { ui.editHD = !ui.editHD; render(); },
+  hd: (d) => { const h = char().hitDice[d.i]; h.used = clamp(h.used + (d.full === '1' ? 1 : -1), 0, h.max); commit(); },
+  'hd-roll': (d) => {
+    const c = char();
+    const h = c.hitDice[d.i];
+    if (h.used >= h.max) return;
+    const roll = 1 + Math.floor(Math.random() * h.die);
+    const m = mod(c.abilities.con);
+    const healed = Math.max(0, roll + m);
+    h.used++;
+    c.hp.cur = Math.min(c.hp.max, c.hp.cur + healed);
+    toast(`к${h.die}: ${roll} ${m >= 0 ? '+' : '−'} ${Math.abs(m)} = ${healed} хитов`);
+    commit();
+  },
+  'hd-max': (d) => { const h = char().hitDice[d.i]; h.max = clamp(h.max + Number(d.d), 0, 20); h.used = Math.min(h.used, h.max); commit(); },
+  'hd-add': () => { char().hitDice.push({ die: 8, max: 1, used: 0 }); commit(); },
+  'hd-del': (d) => { char().hitDice.splice(Number(d.i), 1); commit(); },
+  'hd-level': () => {
+    const c = char();
+    c.hitDice = [{ die: c.hitDice[0]?.die || 8, max: clamp(Number(c.level) || 1, 1, 20), used: 0 }];
+    commit();
+  },
+
+  abil: (d) => {
+    const c = char();
+    const name = ABILITIES.find(([k]) => k === d.a)[2];
+    askNumber(name, c.abilities[d.a], (n) => { c.abilities[d.a] = clamp(n, 1, 30); commit(); });
+  },
+  'save-toggle': (d) => { const c = char(); c.saves[d.a] = !c.saves[d.a]; commit(); },
+  skill: (d) => { const c = char(); c.skills[d.k] = ((c.skills[d.k] || 0) + 1) % 3; commit(); },
+
+  'add-item': () => openItemForm(),
+  'edit-item': (d) => openItemForm(char().items.find((x) => x.id === d.id)),
+  'item-qty': (d) => {
+    const it = char().items.find((x) => x.id === d.id);
+    it.qty = Math.max(0, (Number(it.qty) || 0) + Number(d.d));
+    commit();
+  },
+
   'add-res': () => openResForm(),
   'edit-res': (d) => openResForm(char().resources.find((r) => r.id === d.id)),
   'toggle-edit-res': () => { ui.editRes = !ui.editRes; render(); },
@@ -716,7 +984,7 @@ const actions = {
   rest: (d) => {
     const c = char();
     if (d.kind === 'long') {
-      if (!confirm('Длинный отдых: восстановить хиты, все ячейки и ресурсы?')) return;
+      if (!confirm('Длинный отдых: восстановить хиты, кости хитов, ячейки и ресурсы?')) return;
       c.hp.cur = c.hp.max;
       c.hp.temp = 0;
       c.deathSaves = { ok: 0, fail: 0 };
@@ -724,7 +992,8 @@ const actions = {
       c.pact.used = 0;
       c.resources.forEach((r) => { if (r.reset !== 'none') r.cur = r.max; });
       c.spells.forEach((s) => { if (s.freeReset !== 'none') s.freeUsed = 0; });
-      toast('Длинный отдых завершён');
+      const hd = restoreHitDice(c);
+      toast(`Длинный отдых завершён${hd ? `, костей хитов восстановлено: ${hd}` : ''}`);
     } else {
       c.pact.used = 0;
       c.resources.forEach((r) => { if (r.reset === 'short') r.cur = r.max; });
@@ -763,18 +1032,20 @@ document.addEventListener('click', (e) => {
   fn(el.dataset);
 });
 
-let invTimer;
+const textTimers = {};
 document.addEventListener('input', (e) => {
-  if (e.target.id === 'spellSearch') {
-    ui.search = e.target.value;
+  const t = e.target;
+  if (t.id === 'spellSearch') {
+    ui.search = t.value;
     renderSpellList();
-  } else if (e.target.id === 'invText') {
-    char().inventory = e.target.value;
-    autoGrow(e.target);
-    clearTimeout(invTimer);
-    invTimer = setTimeout(() => {
+  } else if (t.dataset.text) {
+    const key = t.dataset.text;
+    char()[key] = t.value;
+    autoGrow(t);
+    clearTimeout(textTimers[key]);
+    textTimers[key] = setTimeout(() => {
       save(state);
-      const m = $('#invSaved');
+      const m = $(`#${key}Saved`);
       if (m) m.textContent = 'сохранено';
     }, 400);
   }
@@ -785,6 +1056,15 @@ document.addEventListener('change', async (e) => {
   if (t.dataset.bind) {
     const c = char();
     c[t.dataset.bind] = t.dataset.bind === 'level' ? clamp(parseInt(t.value, 10) || 1, 1, 20) : t.value;
+    commit();
+  } else if (t.dataset.sheet) {
+    char()[t.dataset.sheet] = t.type === 'checkbox' ? t.checked : t.value;
+    commit();
+  } else if (t.dataset.coin) {
+    char().coins[t.dataset.coin] = Math.max(0, parseInt(t.value, 10) || 0);
+    commit();
+  } else if (t.dataset.hdDie) {
+    char().hitDice[t.dataset.hdDie].die = Number(t.value);
     commit();
   } else if (t.dataset.setting) {
     state.settings[t.dataset.setting] = t.value.trim();

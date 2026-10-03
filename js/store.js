@@ -28,6 +28,17 @@ export function newCharacter(name = 'Новый персонаж') {
     resources: [],
     spells: [],
     inventory: '',
+    abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+    saves: {},
+    skills: {},
+    jack: false,
+    size: 'medium',
+    powerfulBuild: false,
+    hitDice: [{ die: 8, max: 1, used: 0 }],
+    items: [],
+    coins: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
+    coinsWeight: true,
+    notes: '',
   };
 }
 
@@ -53,6 +64,13 @@ function normalize(s) {
     resources: c.resources || [],
     spells: c.spells || [],
     inventory: c.inventory || '',
+    abilities: { ...base.abilities, ...c.abilities },
+    saves: { ...c.saves },
+    skills: { ...c.skills },
+    hitDice: Array.isArray(c.hitDice) && c.hitDice.length ? c.hitDice : [{ die: 8, max: Number(c.level) || 1, used: 0 }],
+    items: c.items || [],
+    coins: { ...base.coins, ...c.coins },
+    notes: c.notes || '',
   }));
   if (!s.characters.some((c) => c.id === s.activeId)) s.activeId = s.characters[0].id;
   s.settings = { customProxy: '', theme: 'auto', ...s.settings };
