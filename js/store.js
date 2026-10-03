@@ -4,7 +4,10 @@ const KEY = 'spellbook.v1';
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 // Свой прокси на Cloudflare Workers (tools/cf-worker.js) — основной способ загрузки по ссылке.
-export const OWN_PROXY = 'https://special-disco.ilyabondar2o0o0o3.workers.dev/?url={url}';
+const WORKER = 'https://special-disco.ilyabondar2o0o0o3.workers.dev';
+export const OWN_PROXY = WORKER + '/?url={url}';
+// Синхронизация между устройствами — тот же воркер, база D1
+export const SYNC_URL = WORKER + '/sync';
 
 // Публичные прокси — запасной вариант, работают нестабильно.
 export const DEFAULT_PROXIES = [
@@ -48,13 +51,14 @@ function defaults() {
     activeId: c.id,
     characters: [c],
     settings: { customProxy: '', theme: 'auto' },
+    deleted: {},
   };
 }
 
-function normalize(s) {
-  if (!s || !Array.isArray(s.characters) || !s.characters.length) return defaults();
+// Дополняет персонажа недостающими полями (старые сохранения, данные с других устройств)
+export function normalizeCharacter(c) {
   const base = newCharacter();
-  s.characters = s.characters.map((c) => ({
+  return {
     ...base,
     ...c,
     hp: { ...base.hp, ...c.hp },
@@ -71,9 +75,15 @@ function normalize(s) {
     items: c.items || [],
     coins: { ...base.coins, ...c.coins },
     notes: c.notes || '',
-  }));
+  };
+}
+
+function normalize(s) {
+  if (!s || !Array.isArray(s.characters) || !s.characters.length) return defaults();
+  s.characters = s.characters.map(normalizeCharacter);
   if (!s.characters.some((c) => c.id === s.activeId)) s.activeId = s.characters[0].id;
   s.settings = { customProxy: '', theme: 'auto', ...s.settings };
+  s.deleted = s.deleted || {};
   return s;
 }
 

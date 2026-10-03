@@ -1,12 +1,13 @@
-import { load, save, uid, newCharacter, exportJson, importJson, requestPersistence } from './store.js';
+import { load, save, uid, newCharacter, normalizeCharacter, exportJson, importJson, requestPersistence } from './store.js';
 import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js';
 import { fetchSpell } from './import.js';
 import {
   ABILITIES, ABIL_SHORT, SKILLS, SIZES, COINS, COIN_NAME, mod, fmtMod, profBonus, skillBonus, saveBonus,
   capacity, jumps, carried, coinsTotal, itemsValue, fmtNum, restoreHitDice,
 } from './rules.js';
+import { initSync, schedule, syncNow, syncInfo, createSync, connect, disconnect, normalizeCode } from './sync.js';
 
-const APP_VERSION = 'v10'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v11'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -22,8 +23,13 @@ const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const RESET_NAME = { long: 'длинный отдых', short: 'короткий отдых', none: 'вручную' };
 const levelName = (l) => (l === 0 ? 'Заговоры' : `${l} уровень`);
 
-function commit() {
+function persist() {
   save(state);
+  schedule();
+}
+
+function commit() {
+  persist();
   render();
 }
 
@@ -238,9 +244,9 @@ function renderTracker() {
         <span class="lvl">к${h.die}</span>
         <div class="dots">${dots(h.max, h.used, 'hd', `data-i="${i}"`)}</div>
         <span class="count">${h.max - h.used}/${h.max}</span>
-        <button class="btn small" data-action="hd-roll" data-i="${i}" ${h.used >= h.max ? 'disabled' : ''}>🎲</button>
-      </div>`).join('') + `<div class="hint">🎲 — бросить кость ${fmtMod(conMod)} (ТЕЛ) и восстановить хиты. Кружок — отметить без броска.
-        Длинный отдых возвращает ${c.edition === '2024' ? 'все кости' : 'половину костей'}.</div>`;
+        <button class="btn small" data-action="hd-spend" data-i="${i}" ${h.used >= h.max ? 'disabled' : ''}>Потратить</button>
+      </div>`).join('') + `<div class="hint">«Потратить» — ввести выпавшее на кости, к хитам добавится ${fmtMod(conMod)} (ТЕЛ).
+        Кружок — просто отметить кость. Длинный отдых возвращает ${c.edition === '2024' ? 'все кости' : 'половину костей'}.</div>`;
   }
 
   const resetName = { short: 'кор. отдых', long: 'дл. отдых', none: 'вручную' };
@@ -533,9 +539,11 @@ function renderCharacter() {
         </div>`).join('')}
     </div>
 
+    ${syncCard()}
+
     <div class="card">
       <h3>Данные</h3>
-      <div class="hint">Всё хранится только в этом браузере на телефоне. Время от времени сохраняйте резервную копию.</div>
+      <div class="hint">Резервная копия всех персонажей в файл — на всякий случай.</div>
       <div class="row wrap">
         <button class="btn" data-action="export">⬇ Экспорт</button>
         <label class="btn">⬆ Импорт<input type="file" accept="application/json,.json" id="importFile" hidden></label>
@@ -552,6 +560,84 @@ function renderCharacter() {
         <input type="url" data-setting="customProxy" value="${esc(state.settings.customProxy)}" placeholder="https://my-proxy.workers.dev/?url={url}"></label>
       <div class="hint">Если загрузка по ссылке не работает — см. README про бесплатный прокси на Cloudflare Workers. Вставка текста работает всегда.</div>
     </div>`;
+}
+
+const SYNC_STATUS = {
+  off: 'выключена',
+  pending: 'есть несохранённые изменения…',
+  syncing: 'синхронизация…',
+  ok: 'всё сохранено в облаке',
+  error: 'ошибка',
+};
+
+function syncCard() {
+  const s = syncInfo();
+  if (!s.code) {
+    return `
+    <div class="card">
+      <h3>Синхронизация</h3>
+      <div class="hint">Персонажи сохраняются в облаке и доступны на других устройствах по коду синхронизации.</div>
+      <div class="row wrap">
+        <button class="btn primary" data-action="sync-create">Включить</button>
+        <button class="btn" data-action="sync-connect">У меня уже есть код</button>
+      </div>
+    </div>`;
+  }
+  const time = s.last ? new Date(s.last).toLocaleString('ru-RU', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }) : '—';
+  return `
+    <div class="card">
+      <h3>Синхронизация</h3>
+      <div class="hint">Код этого набора персонажей. Введите его на другом устройстве («У меня уже есть код»).</div>
+      <div class="sync-code" data-action="sync-copy">${esc(s.code)}</div>
+      <div class="small ${s.status === 'error' ? 'err' : 'muted'}">Состояние: ${SYNC_STATUS[s.status]}${s.error ? ` (${esc(s.error)})` : ''} · последняя: ${time}</div>
+      <div class="row wrap" style="margin-top:10px">
+        <button class="btn" data-action="sync-now">Синхронизировать</button>
+        <button class="btn" data-action="sync-copy">Скопировать код</button>
+        <button class="btn danger" data-action="sync-off">Отключить</button>
+      </div>
+      <div class="hint">Код — это ключ к персонажам: давайте его только тем, кому доверяете.</div>
+    </div>`;
+}
+
+function openConnect() {
+  const c = state.characters;
+  const hasData = c.length > 1 || c.some((x) => x.spells.length || x.items.length || x.notes || x.name !== 'Мой персонаж');
+  openSheet(`
+    <h2>Подключить по коду<button class="btn icon x" data-action="close">×</button></h2>
+    <input type="text" id="syncCode" placeholder="xxxx-xxxx-xxxx-xxxx-xxxx" autocomplete="off" autocapitalize="off" spellcheck="false">
+    ${hasData ? `
+      <div class="hint">На этом устройстве уже есть персонажи. Что с ними сделать?</div>
+      <label class="check"><input type="radio" name="syncMode" value="replace" checked> Заменить данными из облака</label>
+      <label class="check"><input type="radio" name="syncMode" value="merge"> Объединить: добавить местных персонажей в облако</label>` : ''}
+    <div id="syncErr"></div>
+    <button class="btn primary block" id="syncGo" style="margin-top:8px">Подключить</button>`, 'top');
+  $('#syncCode').focus();
+  $('#syncGo').onclick = async () => {
+    const code = normalizeCode($('#syncCode').value);
+    if (code.length < 19) return ($('#syncErr').innerHTML = '<div class="err">Введите код целиком</div>');
+    const mode = sheet.querySelector('[name=syncMode]:checked')?.value || 'replace';
+    const btn = $('#syncGo');
+    btn.disabled = true;
+    btn.textContent = 'Подключение…';
+    try {
+      await connect(code, mode);
+      closeSheet();
+      toast('Синхронизация подключена');
+      ui.tab = 'character';
+      render();
+    } catch (e) {
+      $('#syncErr').innerHTML = `<div class="err">${esc(e.message)}</div>`;
+      btn.disabled = false;
+      btn.textContent = 'Подключить';
+    }
+  };
+}
+
+function syncIndicator(s) {
+  const el = $('#syncDot');
+  if (!el) return;
+  el.className = 'sync-dot ' + s;
+  el.title = 'Синхронизация: ' + SYNC_STATUS[s];
 }
 
 /* ---------------- нижний лист ---------------- */
@@ -875,7 +961,7 @@ const actions = {
   filter: (d) => { ui.filter = d.f; renderSpells(); },
   'add-spell': () => openAddSpell(),
   'toggle-spell': (d) => { ui.open.has(d.id) ? ui.open.delete(d.id) : ui.open.add(d.id); renderSpellList(); },
-  prep: (d) => { const s = char().spells.find((x) => x.id === d.id); s.prepared = !s.prepared; save(state); renderSpellList(); },
+  prep: (d) => { const s = char().spells.find((x) => x.id === d.id); s.prepared = !s.prepared; persist(); renderSpellList(); },
   'edit-spell': (d) => openSpellForm(char().spells.find((x) => x.id === d.id), false),
   'del-spell': (d) => {
     const c = char();
@@ -934,17 +1020,18 @@ const actions = {
 
   'toggle-edit-hd': () => { ui.editHD = !ui.editHD; render(); },
   hd: (d) => { const h = char().hitDice[d.i]; h.used = clamp(h.used + (d.full === '1' ? 1 : -1), 0, h.max); commit(); },
-  'hd-roll': (d) => {
+  'hd-spend': (d) => {
     const c = char();
     const h = c.hitDice[d.i];
     if (h.used >= h.max) return;
-    const roll = 1 + Math.floor(Math.random() * h.die);
     const m = mod(c.abilities.con);
-    const healed = Math.max(0, roll + m);
-    h.used++;
-    c.hp.cur = Math.min(c.hp.max, c.hp.cur + healed);
-    toast(`к${h.die}: ${roll} ${m >= 0 ? '+' : '−'} ${Math.abs(m)} = ${healed} хитов`);
-    commit();
+    askNumber(`Сколько выпало на к${h.die}?`, '', (roll) => {
+      const healed = Math.max(0, roll + m);
+      h.used++;
+      c.hp.cur = Math.min(c.hp.max, c.hp.cur + healed);
+      toast(`к${h.die}: ${roll} ${m >= 0 ? '+' : '−'} ${Math.abs(m)} = ${healed} хитов`);
+      commit();
+    });
   },
   'hd-max': (d) => { const h = char().hitDice[d.i]; h.max = clamp(h.max + Number(d.d), 0, 20); h.used = Math.min(h.used, h.max); commit(); },
   'hd-add': () => { char().hitDice.push({ die: 8, max: 1, used: 0 }); commit(); },
@@ -1016,10 +1103,35 @@ const actions = {
     if (state.characters.length === 1) return toast('Нельзя удалить единственного персонажа');
     if (!confirm(`Удалить персонажа «${x.name}» со всеми заклинаниями?`)) return;
     state.characters = state.characters.filter((c) => c.id !== d.id);
+    state.deleted[d.id] = Date.now();
     if (state.activeId === d.id) state.activeId = state.characters[0].id;
     commit();
   },
   export: () => exportJson(state),
+  'sync-create': async () => {
+    try {
+      await createSync();
+      toast('Синхронизация включена');
+    } catch (e) {
+      toast('Не удалось включить синхронизацию: ' + e.message);
+    }
+    render();
+  },
+  'sync-connect': () => openConnect(),
+  'sync-now': async () => { await syncNow(); render(); },
+  'sync-copy': async () => {
+    try {
+      await navigator.clipboard.writeText(syncInfo().code);
+      toast('Код скопирован');
+    } catch {
+      toast('Выделите код и скопируйте вручную');
+    }
+  },
+  'sync-off': () => {
+    if (!confirm('Отключить синхронизацию на этом устройстве? Персонажи останутся здесь и в облаке.')) return;
+    disconnect();
+    render();
+  },
 };
 
 document.addEventListener('click', (e) => {
@@ -1044,7 +1156,7 @@ document.addEventListener('input', (e) => {
     autoGrow(t);
     clearTimeout(textTimers[key]);
     textTimers[key] = setTimeout(() => {
-      save(state);
+      persist();
       const m = $(`#${key}Saved`);
       if (m) m.textContent = 'сохранено';
     }, 400);
@@ -1068,14 +1180,14 @@ document.addEventListener('change', async (e) => {
     commit();
   } else if (t.dataset.setting) {
     state.settings[t.dataset.setting] = t.value.trim();
-    save(state);
+    persist();
     applyTheme();
   } else if (t.id === 'importFile' && t.files[0]) {
     try {
       const data = await importJson(t.files[0]);
       if (!confirm('Заменить все текущие данные данными из файла?')) return;
       state = data;
-      save(state);
+      persist();
       applyTheme();
       render();
       toast('Данные импортированы');
@@ -1109,6 +1221,25 @@ applyTheme();
 render();
 requestPersistence();
 handleShare();
+initSync({
+  getState: () => state,
+  apply: (characters, deleted, changed) => {
+    state.characters = characters.length ? characters.map(normalizeCharacter) : [newCharacter('Мой персонаж')];
+    state.deleted = deleted;
+    if (!state.characters.some((c) => c.id === state.activeId)) state.activeId = state.characters[0].id;
+    save(state);
+    // не перерисовываем, пока человек что-то печатает
+    const a = document.activeElement;
+    if (changed && !(a && view.contains(a) && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) render();
+  },
+  onStatus: (s) => {
+    syncIndicator(s);
+    if (ui.tab === 'character' && sheetEl.hidden) {
+      const a = document.activeElement;
+      if (!(a && view.contains(a) && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) renderCharacter();
+    }
+  },
+});
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
