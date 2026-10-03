@@ -95,6 +95,7 @@ async function sync(request, env, cors) {
   await ensureTable(env.DB);
   const row = await env.DB.prepare('SELECT data FROM states WHERE code = ?').bind(body.code).first();
   const stored = row ? JSON.parse(row.data) : { characters: [], deleted: {} };
+  if (body.peek) return json({ ...stored, existed: !!row }, 200, cors);
   const merged = merge(stored, { characters: body.characters || [], deleted: body.deleted || {} });
   const out = JSON.stringify(merged);
   if (!row || out !== row.data) {
