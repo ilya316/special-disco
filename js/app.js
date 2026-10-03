@@ -7,7 +7,7 @@ import {
 } from './rules.js';
 import { initSync, schedule, syncNow, syncInfo, createSync, connect, disconnect, normalizeCode } from './sync.js';
 
-const APP_VERSION = 'v11'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v12'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -144,6 +144,7 @@ function spellCard(s) {
         ${s.level > 0 ? `<button class="btn primary small" data-action="cast" data-id="${s.id}">✦ Сотворить</button>` : ''}
         <button class="btn small" data-action="edit-spell" data-id="${s.id}">✎ Изменить</button>
         ${s.url ? `<a class="btn small" href="${esc(s.url)}" target="_blank" rel="noopener">dnd.su ↗</a>` : ''}
+        ${s.url ? `<button class="btn small" data-action="refresh-spell" data-id="${s.id}">↻ Обновить</button>` : ''}
         <button class="btn small danger" data-action="del-spell" data-id="${s.id}">Удалить</button>
       </div>
     </div>`;
@@ -971,6 +972,23 @@ const actions = {
     commit();
   },
   cast: (d) => openCast(char().spells.find((x) => x.id === d.id)),
+  'refresh-spell': async (d) => {
+    const c = char();
+    const old = c.spells.find((x) => x.id === d.id);
+    toast('Загрузка с dnd.su…');
+    try {
+      const fresh = await fetchSpell(old.url, state.settings.customProxy);
+      // текст и параметры — с сайта; отметки и настройки бесплатных сотворений — свои
+      const keep = ['id', 'prepared', 'freeMax', 'freeUsed', 'freeReset', 'freeUnlimited'];
+      const merged = { ...old, ...fresh };
+      for (const k of keep) if (k in old) merged[k] = old[k];
+      c.spells[c.spells.findIndex((x) => x.id === d.id)] = merged;
+      toast(`«${merged.name}» обновлено`);
+      commit();
+    } catch (e) {
+      toast(e.message);
+    }
+  },
 
   dmg: () => {
     const v = hpInput();

@@ -11,7 +11,7 @@ const FIELDS = [
   ['source', /^источник$/i],
 ];
 
-const HIGHER_RE = /^(на\s+(больших|более\s+высоких)\s+уровнях|использование\s+ячейки\s+большего\s+уровня|улучшение\s+заговора)\.?/i;
+const HIGHER_RE = /^(на\s+(больших|более\s+высоких)\s+уровнях|(использование|используя)\s+ячейк[уи]\s+(заклинания\s+)?большего\s+уровня|улучшение\s+заговора)\.?/i;
 
 export function emptySpell() {
   return {
@@ -126,6 +126,14 @@ export function parseHtml(html, url = '') {
         else paras.push(txt);
       }
       spell.text = paras.join('\n\n');
+      // next.dnd.su (2024): «Используя ячейку заклинания большего уровня» / «Улучшение заговора» — отдельный блок
+      const hl = li.querySelector('[itemprop="spell__higher-levels"]');
+      if (hl) {
+        const head = hl.querySelector('.spell__higher-levels__head');
+        const headText = head ? head.textContent.replace(/\s+/g, ' ').trim() : '';
+        if (head) head.remove();
+        spell.higher = [headText, blockText(hl)].filter(Boolean).join(' ');
+      }
       continue;
     }
     const strong = li.querySelector('strong');
