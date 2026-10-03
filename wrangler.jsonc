@@ -1,0 +1,8 @@
+// Настройки Cloudflare Workers: из этого репозитория выкладывается только прокси для dnd.su.
+// Само приложение публикуется через GitHub Pages.
+{
+  "name": "special-disco",
+  "main": "tools/cf-worker.js",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true
+}
