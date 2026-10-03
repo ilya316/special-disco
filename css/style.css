@@ -255,3 +255,4 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .tag.free { background: var(--card-2); color: var(--temp); }
 .sheet .btn.block { flex-direction: column; gap: 0; height: auto; padding: 8px 14px; }
 .sheet .btn.block .muted { font-weight: 400; font-size: 13px; }
+.btn.primary .muted { color: rgba(255,255,255,.8); }

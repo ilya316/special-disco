@@ -110,7 +110,8 @@ function spellCard(s) {
     s.concentration ? '<span class="tag" title="Концентрация">К</span>' : '',
     s.ritual ? '<span class="tag" title="Ритуал">Р</span>' : '',
     s.edition === '2024' ? '<span class="tag ed">24</span>' : '',
-    s.freeMax ? `<span class="tag free" title="Без ячейки">◇${s.freeMax - (s.freeUsed || 0)}/${s.freeMax}</span>` : '',
+    s.freeUnlimited ? '<span class="tag free" title="Без ячейки неограниченно">◇∞</span>'
+      : s.freeMax ? `<span class="tag free" title="Без ячейки">◇${s.freeMax - (s.freeUsed || 0)}/${s.freeMax}</span>` : '',
   ].join('');
   const sub = [s.castTime, s.range, s.components && s.components.replace(/\s*\(.*\)/, '')].filter(Boolean).join(' · ');
   let body = '';
@@ -118,7 +119,8 @@ function spellCard(s) {
     const props = [
       ['Школа', s.school], ['Время', s.castTime], ['Дистанция', s.range], ['Компоненты', s.components],
       ['Длительность', s.duration], ['Классы', s.classes], ['Подклассы', s.subclasses], ['Источник', s.source],
-      ['Без ячейки', s.freeMax ? `${s.freeMax - (s.freeUsed || 0)} из ${s.freeMax} (${RESET_NAME[s.freeReset] || ''})` : ''],
+      ['Без ячейки', s.freeUnlimited ? 'неограниченно'
+        : s.freeMax ? `${s.freeMax - (s.freeUsed || 0)} из ${s.freeMax} (${RESET_NAME[s.freeReset] || ''})` : ''],
     ].filter(([, v]) => v);
     const paras = (t) => t.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
     body = `<div class="spell-body">
@@ -350,7 +352,9 @@ function askNumber(title, value, onOk) {
     onOk(v);
   };
   $('#numOk').onclick = ok;
-  inp.onkeydown = (e) => e.key === 'Enter' && ok();
+  inp.onkeydown = (e) => {
+    if (e.key === 'Enter') ok();
+  };
 }
 
 /* --- добавление заклинания --- */
@@ -421,6 +425,7 @@ function openAddSpell({ mode = 'link', url = '', text = '', autoFetch = false } 
 
 function openSpellForm(spell, isNew = !spell.id) {
   const f = (k, label, ph = '') => `<label class="field"><span>${label}</span><input type="text" name="${k}" value="${esc(spell[k])}" placeholder="${ph}"></label>`;
+  const freeMode = spell.freeUnlimited ? 'unlimited' : spell.freeMax ? 'limited' : 'none';
   openSheet(`
     <h2>${isNew ? 'Проверьте и сохраните' : 'Изменить заклинание'}<button class="btn icon x" data-action="close">×</button></h2>
     <form id="spellForm">
@@ -442,14 +447,18 @@ function openSpellForm(spell, isNew = !spell.id) {
       </div>
       ${f('classes', 'Классы')}
       ${f('source', 'Источник')}
-      <div class="grid2">
-        <label class="field"><span>Раз без ячейки (0 — без лимита)</span>
-          <input type="number" inputmode="numeric" name="freeMax" min="0" max="20" value="${spell.freeMax || 0}"></label>
+      <label class="field"><span>Сотворение без ячейки</span><select name="freeMode" id="freeMode">
+        <option value="none" ${freeMode === 'none' ? 'selected' : ''}>Нет</option>
+        <option value="limited" ${freeMode === 'limited' ? 'selected' : ''}>Ограниченное число раз</option>
+        <option value="unlimited" ${freeMode === 'unlimited' ? 'selected' : ''}>Неограниченно (по желанию)</option>
+      </select></label>
+      <div class="grid2" id="freeLimited" ${freeMode === 'limited' ? '' : 'hidden'}>
+        <label class="field"><span>Сколько раз</span>
+          <input type="number" inputmode="numeric" name="freeMax" min="1" max="20" value="${spell.freeMax || 1}"></label>
         <label class="field"><span>Восстанавливается</span><select name="freeReset">
           ${['long', 'short', 'none'].map((r) => `<option value="${r}" ${(spell.freeReset || 'long') === r ? 'selected' : ''}>${RESET_NAME[r]}</option>`).join('')}
         </select></label>
       </div>
-      <div class="hint" style="margin-top:-6px">Для заклинаний от черт, расы, предметов: «1 раз за длинный отдых без ячейки».</div>
       <label class="field"><span>Описание</span><textarea name="text">${esc(spell.text)}</textarea></label>
       <label class="field"><span>На больших уровнях</span><textarea name="higher" style="min-height:80px">${esc(spell.higher)}</textarea></label>
       <div class="grid2">
@@ -462,6 +471,7 @@ function openSpellForm(spell, isNew = !spell.id) {
       <button class="btn primary block" type="submit">Сохранить</button>
     </form>`);
   sheet.scrollTop = 0;
+  $('#freeMode').onchange = (e) => ($('#freeLimited').hidden = e.target.value !== 'limited');
   $('#spellForm').onsubmit = (e) => {
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -472,7 +482,9 @@ function openSpellForm(spell, isNew = !spell.id) {
     data.level = Number(fd.get('level'));
     data.concentration = fd.get('concentration') === 'on';
     data.ritual = fd.get('ritual') === 'on';
-    data.freeMax = clamp(parseInt(fd.get('freeMax'), 10) || 0, 0, 20);
+    const mode = fd.get('freeMode');
+    data.freeUnlimited = mode === 'unlimited';
+    data.freeMax = mode === 'limited' ? clamp(parseInt(fd.get('freeMax'), 10) || 1, 1, 20) : 0;
     data.freeReset = fd.get('freeReset') || 'long';
     data.freeUsed = Math.min(spell.freeUsed || 0, data.freeMax);
     if (!data.name) return toast('Укажите название');
@@ -513,10 +525,11 @@ function openCast(spell) {
         ${o.kind === 'pact' ? 'Ячейка колдуна' : 'Ячейка'} ${o.l} ур. <span class="muted">(осталось ${o.left})</span>
       </button>`).join('') : `<div class="muted">Подходящих ячеек нет — их можно настроить во вкладке «Трекер».</div>`}
     <div class="hint" style="margin-top:14px">Без траты ячейки:</div>
+    ${spell.freeUnlimited ? `<button class="btn block primary" style="margin-bottom:8px" data-cast="nocost">◇ Бесплатно <span class="muted">(неограниченно)</span></button>` : ''}
     ${spell.freeMax ? `<button class="btn block" style="margin-bottom:8px" data-cast="free" ${spell.freeMax - (spell.freeUsed || 0) <= 0 ? 'disabled' : ''}>
         ◇ Бесплатно <span class="muted">(осталось ${spell.freeMax - (spell.freeUsed || 0)} из ${spell.freeMax}, ${RESET_NAME[spell.freeReset] || ''})</span></button>` : ''}
     ${spell.ritual ? `<button class="btn block" style="margin-bottom:8px" data-cast="ritual">Как ритуал (+10 минут)</button>` : ''}
-    <button class="btn block" data-cast="nocost">Просто сотворить, ничего не тратя</button>
+    ${spell.freeUnlimited ? '' : '<button class="btn block" data-cast="nocost">Просто сотворить, ничего не тратя</button>'}
     ${spell.freeUsed ? `<button class="btn link small block" style="margin-top:8px" data-cast="free-reset">Восстановить бесплатные использования</button>` : ''}`);
   sheet.querySelectorAll('[data-cast]').forEach((b) => (b.onclick = () => {
     const k = b.dataset.cast;
