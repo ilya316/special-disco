@@ -340,3 +340,9 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .hist-h { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 4px; }
 .hist { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .hist:last-child { border-bottom: 0; }
+
+/* сворачиваемые секции уровней */
+button.level-head { width: calc(100% - 4px); background: none; border: 0; padding: 6px 0; cursor: pointer; text-align: left; font: inherit; font-size: 13px; font-weight: 700; color: var(--muted); }
+.level-head .chev { display: inline-block; width: 14px; transition: transform .15s; }
+.level-head.closed .chev { transform: rotate(-90deg); }
+.level-count { font-weight: 600; background: var(--card-2); border-radius: 99px; padding: 0 7px; letter-spacing: 0; }

@@ -11,7 +11,7 @@ import {
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v14'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v15'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -112,14 +112,26 @@ function renderSpellList() {
   }
   let html = '';
   let cur = -1;
+  const counts = {};
+  for (const s of items) counts[s.level] = (counts[s.level] || 0) + 1;
+  const folded = collapsedLevels();
   for (const s of items) {
+    // при поиске секции не сворачиваем, чтобы найденное было видно
+    const closed = !q && folded.includes(s.level);
     if (s.level !== cur) {
       cur = s.level;
-      html += `<div class="level-head">${levelName(cur)}<span class="slots-mini">${slotsInfo(c, cur)}</span></div>`;
+      html += `<button class="level-head ${closed ? 'closed' : ''}" data-action="toggle-level" data-l="${cur}" aria-expanded="${!closed}">
+        <span class="chev">▾</span>${levelName(cur)} <span class="level-count">${counts[cur]}</span>
+        <span class="slots-mini">${slotsInfo(c, cur)}</span></button>`;
     }
-    html += spellCard(s);
+    if (!closed) html += spellCard(s);
   }
   list.innerHTML = html;
+}
+
+// Свёрнутые секции — настройка этого устройства, отдельно для каждого персонажа
+function collapsedLevels() {
+  return (state.settings.collapsed || {})[state.activeId] || [];
 }
 
 function spellCard(s) {
@@ -1110,6 +1122,14 @@ const actions = {
   close: () => closeSheet(),
 
   filter: (d) => { ui.filter = d.f; renderSpells(); },
+  'toggle-level': (d) => {
+    const l = Number(d.l);
+    const all = (state.settings.collapsed ||= {});
+    const cur = collapsedLevels();
+    all[state.activeId] = cur.includes(l) ? cur.filter((x) => x !== l) : [...cur, l];
+    save(state); // только настройка устройства — синхронизировать нечего
+    renderSpellList();
+  },
   'add-spell': () => openAddSpell(),
   'toggle-spell': (d) => { ui.open.has(d.id) ? ui.open.delete(d.id) : ui.open.add(d.id); renderSpellList(); },
   prep: (d) => { const s = char().spells.find((x) => x.id === d.id); s.prepared = !s.prepared; persist(); renderSpellList(); },
