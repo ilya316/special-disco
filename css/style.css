@@ -335,3 +335,8 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .rte a { color: var(--accent); }
 .rte table { border-collapse: collapse; margin: 6px 0; }
 .rte td, .rte th { border: 1px solid var(--line); padding: 4px 8px; }
+
+/* копии и версии */
+.hist-h { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 4px; }
+.hist { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.hist:last-child { border-bottom: 0; }

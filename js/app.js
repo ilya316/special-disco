@@ -6,9 +6,12 @@ import {
   ABILITIES, ABIL_SHORT, SKILLS, SIZES, COINS, COIN_NAME, mod, fmtMod, profBonus, skillBonus, saveBonus,
   capacity, jumps, carried, coinsTotal, itemsValue, fmtNum, restoreHitDice,
 } from './rules.js';
-import { initSync, schedule, syncNow, syncInfo, createSync, connect, disconnect, normalizeCode } from './sync.js';
+import {
+  initSync, schedule, syncNow, syncInfo, createSync, connect, disconnect, normalizeCode,
+  listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
+} from './sync.js';
 
-const APP_VERSION = 'v13'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v14'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -627,9 +630,11 @@ function renderCharacter() {
 
     <div class="card">
       <h3>Данные</h3>
-      <div class="hint">Резервная копия всех персонажей в файл — на всякий случай.</div>
+      <div class="hint">Резервная копия всех персонажей в файл — на всякий случай. Копии на устройстве делаются сами
+        перед каждым получением изменений с других устройств.</div>
       <div class="row wrap">
         <button class="btn" data-action="export">⬇ Экспорт</button>
+        <button class="btn" data-action="history">Копии и версии</button>
         <label class="btn">⬆ Импорт<input type="file" accept="application/json,.json" id="importFile" hidden></label>
       </div>
     </div>
@@ -677,6 +682,7 @@ function syncCard() {
       <div class="row wrap" style="margin-top:10px">
         <button class="btn" data-action="sync-now">Синхронизировать</button>
         <button class="btn" data-action="sync-copy">Скопировать код</button>
+        <button class="btn" data-action="history">История версий</button>
         <button class="btn danger" data-action="sync-off">Отключить</button>
       </div>
       <div class="hint">Код — это ключ к персонажам: давайте его только тем, кому доверяете.</div>
@@ -715,6 +721,67 @@ function openConnect() {
       btn.textContent = 'Подключить';
     }
   };
+}
+
+function summarize(chars) {
+  return chars.map((c) => `${c.name || '—'}: ${(c.items || []).length} вещ., ${(c.spells || []).length} закл.`).join('; ');
+}
+
+function fmtTime(t) {
+  return new Date(t).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+async function openHistory() {
+  const backups = listBackups();
+  openSheet(`
+    <h2>Копии и версии<button class="btn icon x" data-action="close">×</button></h2>
+    <div class="hint">«Восстановить» возвращает всех персонажей к выбранному состоянию${syncInfo().code ? ' на всех устройствах' : ''}.
+      Текущее состояние перед этим тоже сохранится в копиях.</div>
+    ${syncInfo().code ? '<h3 class="hist-h">В облаке</h3><div id="cloudVersions" class="muted small">Загрузка…</div>' : ''}
+    <h3 class="hist-h">На этом устройстве</h3>
+    ${backups.length ? backups.map((b, i) => `
+      <div class="hist">
+        <div class="grow"><b>${fmtTime(b.time)}</b> <span class="muted small">${esc(b.reason || '')}</span>
+          <div class="small muted">${esc(summarize(b.characters))}</div></div>
+        <button class="btn small" data-restore-local="${i}">Восстановить</button>
+      </div>`).join('') : '<div class="muted small">Пока нет.</div>'}`);
+
+  sheet.querySelectorAll('[data-restore-local]').forEach((b) => (b.onclick = () => doRestore(backups[b.dataset.restoreLocal].characters)));
+
+  if (!syncInfo().code) return;
+  try {
+    const versions = await listVersions();
+    const box = $('#cloudVersions');
+    if (!box) return;
+    box.classList.remove('muted', 'small');
+    box.innerHTML = versions.length ? versions.map((v, i) => `
+      <div class="hist">
+        <div class="grow"><b>${fmtTime(v.created)}</b> ${i === 0 ? '<span class="muted small">текущая</span>' : ''}
+          <div class="small muted">${esc(v.chars.map((c) => `${c.name}: ${c.items} вещ., ${c.spells} закл.`).join('; '))}</div></div>
+        ${i === 0 ? '' : `<button class="btn small" data-restore-rev="${v.rev}">Восстановить</button>`}
+      </div>`).join('') : '<div class="muted small">История начнёт вестись со следующего изменения.</div>';
+    box.querySelectorAll('[data-restore-rev]').forEach((b) => (b.onclick = async () => {
+      b.disabled = true;
+      try {
+        const v = await getVersion(Number(b.dataset.restoreRev));
+        await doRestore(v.characters);
+      } catch (e) {
+        toast(e.message);
+        b.disabled = false;
+      }
+    }));
+  } catch (e) {
+    const box = $('#cloudVersions');
+    if (box) box.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  }
+}
+
+async function doRestore(characters) {
+  if (!confirm(`Восстановить это состояние?\n${summarize(characters)}`)) return;
+  closeSheet();
+  await restoreCharacters(characters);
+  toast('Восстановлено');
+  render();
 }
 
 function syncIndicator(s) {
@@ -1204,7 +1271,6 @@ const actions = {
     if (state.characters.length === 1) return toast('Нельзя удалить единственного персонажа');
     if (!confirm(`Удалить персонажа «${x.name}» со всеми заклинаниями?`)) return;
     state.characters = state.characters.filter((c) => c.id !== d.id);
-    state.deleted[d.id] = Date.now();
     if (state.activeId === d.id) state.activeId = state.characters[0].id;
     commit();
   },
@@ -1219,6 +1285,7 @@ const actions = {
     render();
   },
   'sync-connect': () => openConnect(),
+  history: () => openHistory(),
   'sync-now': async () => { await syncNow(); render(); },
   'sync-copy': async () => {
     try {
@@ -1322,11 +1389,11 @@ applyTheme();
 render();
 requestPersistence();
 handleShare();
+if (!listBackups()[0] || Date.now() - listBackups()[0].time > 12 * 3600e3) backupLocal(state.characters, 'автоматически');
 initSync({
   getState: () => state,
-  apply: (characters, deleted, changed) => {
+  apply: (characters, changed) => {
     state.characters = characters.length ? characters.map(normalizeCharacter) : [newCharacter('Мой персонаж')];
-    state.deleted = deleted;
     if (!state.characters.some((c) => c.id === state.activeId)) state.activeId = state.characters[0].id;
     save(state);
     // не перерисовываем, пока человек что-то печатает
