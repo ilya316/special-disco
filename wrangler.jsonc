@@ -1,8 +1,12 @@
-// Настройки Cloudflare Workers: из этого репозитория выкладывается только прокси для dnd.su.
-// Само приложение публикуется через GitHub Pages.
+// Настройки Cloudflare Workers: из этого репозитория выкладывается воркер tools/cf-worker.js
+// (прокси dnd.su + синхронизация через базу D1). Само приложение публикуется через GitHub Pages.
 {
   "name": "special-disco",
   "main": "tools/cf-worker.js",
   "compatibility_date": "2026-10-01",
-  "workers_dev": true
+  "workers_dev": true,
+  // База для синхронизации. Без database_id Wrangler создаёт её сам при первом деплое.
+  "d1_databases": [
+    { "binding": "DB", "database_name": "special-disco-sync" }
+  ]
 }
