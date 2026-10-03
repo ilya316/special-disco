@@ -310,3 +310,28 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .sync-dot.ok { background: var(--ok); }
 .sync-dot.pending, .sync-dot.syncing { background: var(--temp); }
 .sync-dot.error { background: var(--danger); }
+
+/* заметки с форматированием */
+.rte-bar {
+  position: sticky; z-index: 4; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none;
+  background: var(--bg); padding: 6px 0 8px; margin-top: -6px;
+}
+.rte-bar::-webkit-scrollbar { display: none; }
+.rte-bar button {
+  flex: none; min-width: 40px; height: 38px; border-radius: 9px; border: 1px solid var(--line);
+  background: var(--card); font-size: 16px; padding: 0 8px;
+}
+.rte-bar button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rte {
+  min-height: 400px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--card-2); outline: none; line-height: 1.5; overflow-wrap: anywhere;
+}
+.rte:focus { border-color: var(--accent); }
+.rte.empty::before { content: attr(data-placeholder); color: var(--muted); pointer-events: none; }
+.rte h3 { font-size: 18px; margin: 12px 0 4px; text-transform: none; letter-spacing: 0; color: var(--text); display: block; }
+.rte ul, .rte ol { margin: 4px 0; padding-left: 24px; }
+.rte blockquote { margin: 6px 0; padding: 4px 12px; border-left: 3px solid var(--accent); color: var(--muted); }
+.rte p { margin: 0 0 8px; }
+.rte a { color: var(--accent); }
+.rte table { border-collapse: collapse; margin: 6px 0; }
+.rte td, .rte th { border: 1px solid var(--line); padding: 4px 8px; }

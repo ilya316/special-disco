@@ -1,13 +1,14 @@
 import { load, save, uid, newCharacter, normalizeCharacter, exportJson, importJson, requestPersistence } from './store.js';
 import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js';
 import { fetchSpell } from './import.js';
+import { sanitizeHtml } from './richtext.js';
 import {
   ABILITIES, ABIL_SHORT, SKILLS, SIZES, COINS, COIN_NAME, mod, fmtMod, profBonus, skillBonus, saveBonus,
   capacity, jumps, carried, coinsTotal, itemsValue, fmtNum, restoreHitDice,
 } from './rules.js';
 import { initSync, schedule, syncNow, syncInfo, createSync, connect, disconnect, normalizeCode } from './sync.js';
 
-const APP_VERSION = 'v12'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v13'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -373,14 +374,96 @@ function renderInventory() {
   view.querySelectorAll('textarea.autogrow').forEach(autoGrow);
 }
 
+const RTE_TOOLS = [
+  ['bold', '<b>Ж</b>', 'Жирный'],
+  ['italic', '<i>К</i>', 'Курсив'],
+  ['underline', '<u>Ч</u>', 'Подчёркнутый'],
+  ['strikeThrough', '<s>З</s>', 'Зачёркнутый'],
+  ['h3', 'H', 'Заголовок'],
+  ['insertUnorderedList', '•', 'Список'],
+  ['insertOrderedList', '1.', 'Нумерованный список'],
+  ['blockquote', '❝', 'Цитата'],
+  ['removeFormat', '⌫', 'Убрать форматирование'],
+];
+
 function renderNotes() {
   view.innerHTML = `
+    <div class="rte-bar" id="rteBar">
+      ${RTE_TOOLS.map(([cmd, label, title]) => `<button type="button" data-cmd="${cmd}" title="${title}" aria-label="${title}">${label}</button>`).join('')}
+    </div>
     <div class="card inv">
       <h3>Заметки <span class="spacer"></span><span class="small muted" id="notesSaved"></span></h3>
-      <textarea data-text="notes" class="autogrow" data-min="400" placeholder="Сюжет, имена NPC, квесты, долги таверне…">${esc(char().notes)}</textarea>
-      <div class="hint">Сохраняется автоматически.</div>
+      <div class="rte" id="notesEditor" contenteditable="true" spellcheck="true"
+        data-placeholder="Сюжет, имена NPC, квесты, долги таверне…">${sanitizeHtml(char().notesHtml)}</div>
+      <div class="hint">Сохраняется автоматически. Текст, вставленный с сайтов и из документов, сохраняет жирный, курсив, списки и заголовки.</div>
     </div>`;
-  view.querySelectorAll('textarea.autogrow').forEach(autoGrow);
+  const bar = $('#rteBar');
+  bar.style.top = $('.topbar').offsetHeight + 'px';
+  const ed = $('#notesEditor');
+  ed.classList.toggle('empty', !ed.textContent.trim());
+
+  // pointerdown + preventDefault: кнопка не забирает фокус и выделение у редактора
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('[data-cmd]')) e.preventDefault();
+  });
+  bar.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-cmd]');
+    if (!b) return;
+    if (document.activeElement !== ed) ed.focus();
+    const cmd = b.dataset.cmd;
+    if (cmd === 'h3' || cmd === 'blockquote') {
+      const cur = String(document.queryCommandValue('formatBlock')).toLowerCase().replace(/[<>]/g, '');
+      document.execCommand('formatBlock', false, cur === cmd ? 'div' : cmd);
+    } else {
+      document.execCommand(cmd);
+    }
+    saveNotes(ed);
+    updateRteBar();
+  });
+
+  ed.addEventListener('paste', (e) => {
+    const html = e.clipboardData.getData('text/html');
+    const text = e.clipboardData.getData('text/plain');
+    e.preventDefault();
+    if (html) document.execCommand('insertHTML', false, sanitizeHtml(html));
+    else document.execCommand('insertText', false, text);
+  });
+  ed.addEventListener('input', () => saveNotes(ed));
+  ed.addEventListener('keyup', updateRteBar);
+  ed.addEventListener('mouseup', updateRteBar);
+  ed.addEventListener('blur', () => bar.querySelectorAll('.on').forEach((b) => b.classList.remove('on')));
+}
+
+// Подсветка кнопок, которые уже применены к тексту под курсором
+function updateRteBar() {
+  const bar = $('#rteBar');
+  if (!bar) return;
+  const block = String(document.queryCommandValue('formatBlock')).toLowerCase().replace(/[<>]/g, '');
+  bar.querySelectorAll('[data-cmd]').forEach((b) => {
+    const cmd = b.dataset.cmd;
+    let on = false;
+    try {
+      on = cmd === 'h3' || cmd === 'blockquote' ? block === cmd : cmd !== 'removeFormat' && document.queryCommandState(cmd);
+    } catch {}
+    b.classList.toggle('on', on);
+  });
+}
+document.addEventListener('selectionchange', () => {
+  if (document.activeElement?.id === 'notesEditor') updateRteBar();
+});
+
+let notesTimer;
+function saveNotes(ed) {
+  ed.classList.toggle('empty', !ed.textContent.trim());
+  clearTimeout(notesTimer);
+  notesTimer = setTimeout(() => {
+    const c = char();
+    c.notesHtml = sanitizeHtml(ed.innerHTML);
+    c.notes = ed.innerText; // простой текст — для старых версий приложения
+    persist();
+    const m = $('#notesSaved');
+    if (m) m.textContent = 'сохранено';
+  }, 400);
 }
 
 function autoGrow(t) {
@@ -1248,13 +1331,13 @@ initSync({
     save(state);
     // не перерисовываем, пока человек что-то печатает
     const a = document.activeElement;
-    if (changed && !(a && view.contains(a) && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) render();
+    if (changed && !(a && view.contains(a) && (/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable))) render();
   },
   onStatus: (s) => {
     syncIndicator(s);
     if (ui.tab === 'character' && sheetEl.hidden) {
       const a = document.activeElement;
-      if (!(a && view.contains(a) && /INPUT|TEXTAREA|SELECT/.test(a.tagName))) renderCharacter();
+      if (!(a && view.contains(a) && (/INPUT|TEXTAREA|SELECT/.test(a.tagName) || a.isContentEditable))) renderCharacter();
     }
   },
 });

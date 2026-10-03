@@ -1,4 +1,5 @@
 // Хранение состояния в localStorage + бэкап в JSON.
+import { textToHtml } from './richtext.js';
 const KEY = 'spellbook.v1';
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -42,6 +43,7 @@ export function newCharacter(name = 'Новый персонаж') {
     coins: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
     coinsWeight: true,
     notes: '',
+    notesHtml: '',
   };
 }
 
@@ -75,6 +77,7 @@ export function normalizeCharacter(c) {
     items: c.items || [],
     coins: { ...base.coins, ...c.coins },
     notes: c.notes || '',
+    notesHtml: typeof c.notesHtml === 'string' ? c.notesHtml : textToHtml(c.notes || ''),
   };
 }
 
