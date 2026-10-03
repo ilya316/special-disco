@@ -11,7 +11,7 @@ import {
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v15'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v16'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -65,6 +65,9 @@ function render() {
   else if (ui.tab === 'notes') renderNotes();
   else renderCharacter();
 }
+
+// Инициатива = модификатор Ловкости + дополнительный бонус (черты, предметы, особенности класса)
+const initiative = (c) => mod(c.abilities.dex) + (Number(c.initBonus) || 0);
 
 function slotsInfo(c, level) {
   if (level === 0) return '';
@@ -279,7 +282,16 @@ function renderTracker() {
       <button class="btn icon" data-action="res" data-id="${r.id}" data-d="1">＋</button>
     </div>`).join('') : `<div class="muted small">Здесь можно отслеживать ярость, канал божественности, вдохновение, заряды предметов и т.д.</div>`;
 
+  const init = initiative(c);
   view.innerHTML = `
+    <div class="combat">
+      <button class="combat-tile" data-action="ac"><span class="v">${c.ac}</span><span class="l">КД</span></button>
+      <button class="combat-tile" data-action="init"><span class="v">${fmtMod(init)}</span><span class="l">Инициатива</span></button>
+      <button class="combat-tile" data-action="speed"><span class="v">${c.speed}<small> фт.</small></span><span class="l">Скорость</span></button>
+      <button class="combat-tile insp ${c.inspiration ? 'on' : ''}" data-action="inspiration" aria-pressed="${c.inspiration}">
+        <span class="v">${c.inspiration ? '★' : '☆'}</span><span class="l">Вдохновение</span></button>
+    </div>
+
     <div class="rest-row">
       <button class="btn" data-action="rest" data-kind="short">☕ Короткий отдых</button>
       <button class="btn" data-action="rest" data-kind="long">🌙 Длинный отдых</button>
@@ -506,7 +518,7 @@ function renderSheet() {
       </div>
       <div class="stat-grid">
         <div><span>${fmtMod(pb)}</span>Бонус мастерства</div>
-        <div><span>${fmtMod(mod(c.abilities.dex))}</span>Инициатива</div>
+        <div><span>${fmtMod(initiative(c))}</span>Инициатива</div>
         <div><span>${10 + skillBonus(c, 'perception', 'wis')}</span>Пасс. внимат.</div>
       </div>
       <div class="hint">Нажмите на характеристику, чтобы изменить значение. Бонус мастерства — по уровню персонажа (${c.level}).</div>
@@ -818,7 +830,7 @@ sheetEl.addEventListener('click', (e) => {
   if (e.target === sheetEl) closeSheet();
 });
 
-function askNumber(title, value, onOk) {
+function askNumber(title, value, onOk, min = 0) {
   openSheet(`
     <h2>${esc(title)}<button class="btn icon x" data-action="close">×</button></h2>
     <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" id="numVal" class="num-big" value="${value}">
@@ -836,7 +848,7 @@ function askNumber(title, value, onOk) {
     onOk(v);
   };
   sheet.querySelectorAll('[data-step]').forEach((b) => (b.onclick = () => {
-    inp.value = Math.max(0, (parseInt(inp.value, 10) || 0) + Number(b.dataset.step));
+    inp.value = Math.max(min, (parseInt(inp.value, 10) || 0) + Number(b.dataset.step));
   }));
   $('#numOk').onclick = ok;
   inp.onkeydown = (e) => {
@@ -1206,6 +1218,14 @@ const actions = {
   'pact-level': (d) => { const p = char().pact; p.level = clamp(p.level + Number(d.d), 1, 9); commit(); },
   'auto-slots': (d) => { autoSlots(d.kind); commit(); },
 
+ ac: () => askNumber('Класс доспеха', char().ac, (n) => { char().ac = clamp(n, 0, 40); commit(); }),
+  init: () => {
+    const c = char();
+    const dex = mod(c.abilities.dex);
+    askNumber(`Инициатива (ЛОВ ${fmtMod(dex)} + доп. бонус)`, initiative(c), (n) => { c.initBonus = clamp(n, -10, 30) - dex; commit(); }, -10);
+  },
+  speed: () => askNumber('Скорость, фт.', char().speed, (n) => { char().speed = clamp(n, 0, 300); commit(); }),
+  inspiration: () => { const c = char(); c.inspiration = !c.inspiration; commit(); },
   'toggle-edit-hd': () => { ui.editHD = !ui.editHD; render(); },
   hd: (d) => { const h = char().hitDice[d.i]; h.used = clamp(h.used + (d.full === '1' ? 1 : -1), 0, h.max); commit(); },
   'hd-spend': (d) => {

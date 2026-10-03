@@ -44,6 +44,10 @@ export function newCharacter(name = 'Новый персонаж') {
     coinsWeight: true,
     notes: '',
     notesHtml: '',
+    ac: 10,
+    initBonus: 0,
+    speed: 30,
+    inspiration: false,
   };
 }
 
