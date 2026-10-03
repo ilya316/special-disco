@@ -1,5 +1,5 @@
 // Загрузка страницы dnd.su через CORS-прокси (браузер не даёт читать чужие сайты напрямую).
-import { DEFAULT_PROXIES } from './store.js';
+import { OWN_PROXY, DEFAULT_PROXIES } from './store.js';
 import { parseHtml } from './parser.js';
 
 async function fetchWithTimeout(url, ms) {
@@ -33,17 +33,19 @@ export function normalizeSpellUrl(url) {
 
 export async function fetchSpell(url, customProxy = '') {
   const target = normalizeSpellUrl(url);
-  const proxies = [customProxy, ...DEFAULT_PROXIES].filter(Boolean);
+  const proxies = [customProxy, OWN_PROXY, ...DEFAULT_PROXIES].filter(Boolean);
   const errors = [];
   for (const p of proxies) {
     const full = p.includes('{url}') ? p.replace('{url}', encodeURIComponent(target)) : p + encodeURIComponent(target);
     try {
-      const html = await fetchWithTimeout(full, 12000);
+      const html = await fetchWithTimeout(full, 8000);
       if (!html.includes('params')) throw new Error('неожиданный ответ');
       return parseHtml(html, target);
     } catch (e) {
       errors.push(`${new URL(full).hostname}: ${e.name === 'AbortError' ? 'таймаут' : e.message}`);
     }
   }
-  throw new Error('Не удалось загрузить страницу (' + errors.join('; ') + ')');
+  const err = new Error('Не удалось загрузить страницу заклинания.');
+  err.details = errors.join('; ');
+  throw err;
 }

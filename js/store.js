@@ -3,10 +3,13 @@ const KEY = 'spellbook.v1';
 
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
+// Свой прокси на Cloudflare Workers (tools/cf-worker.js) — основной способ загрузки по ссылке.
+export const OWN_PROXY = '';
+
+// Публичные прокси — запасной вариант, работают нестабильно.
 export const DEFAULT_PROXIES = [
   'https://api.allorigins.win/raw?url={url}',
   'https://api.codetabs.com/v1/proxy/?quest={url}',
-  'https://corsproxy.io/?url={url}',
 ];
 
 export function newCharacter(name = 'Новый персонаж') {

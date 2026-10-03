@@ -372,7 +372,7 @@ function openAddSpell({ mode = 'link', url = '', text = '', autoFetch = false } 
     if (m === 'link') {
       body.innerHTML = `
         <input type="url" id="spellUrl" placeholder="https://dnd.su/spells/205-fireball/" value="${esc(url)}">
-        <div class="hint">Ссылка со страницы заклинания на dnd.su или next.dnd.su. Загрузка идёт через публичный прокси — если не получится, используйте «Вставить текст».</div>
+        <div class="hint">Ссылка со страницы заклинания на dnd.su или next.dnd.su.</div>
         <div id="addErr"></div>
         <button class="btn primary block" id="fetchBtn">Загрузить</button>`;
       const go = async () => {
@@ -385,7 +385,11 @@ function openAddSpell({ mode = 'link', url = '', text = '', autoFetch = false } 
           const spell = await fetchSpell($('#spellUrl').value, state.settings.customProxy);
           openSpellForm(spell, true);
         } catch (e) {
-          err.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+          err.innerHTML = `<div class="err">${esc(e.message)}</div>
+            ${e.details ? `<div class="hint">${esc(e.details)}</div>` : ''}
+            <div class="hint">Можно скопировать текст со страницы и вставить его вручную.</div>
+            <button class="btn block" id="toTextBtn" style="margin-bottom:8px">Вставить текст вместо ссылки</button>`;
+          $('#toTextBtn').onclick = () => openAddSpell({ mode: 'text', url: $('#spellUrl').value.trim() });
           btn.disabled = false;
           btn.textContent = 'Загрузить';
         }
