@@ -2,6 +2,8 @@ import { load, save, uid, newCharacter, exportJson, importJson, requestPersisten
 import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js';
 import { fetchSpell } from './import.js';
 
+const APP_VERSION = 'v7'; // меняйте вместе с VERSION в sw.js
+
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false };
 
@@ -320,6 +322,7 @@ function renderCharacter() {
       <label class="field"><span>Свой прокси для загрузки по ссылке (необязательно)</span>
         <input type="url" data-setting="customProxy" value="${esc(state.settings.customProxy)}" placeholder="https://my-proxy.workers.dev/?url={url}"></label>
       <div class="hint">Если загрузка по ссылке не работает — см. README про бесплатный прокси на Cloudflare Workers. Вставка текста работает всегда.</div>
+      <div class="hint">Версия приложения: ${APP_VERSION}</div>
     </div>`;
 }
 
@@ -821,5 +824,5 @@ requestPersistence();
 handleShare();
 
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
 }
