@@ -2,7 +2,7 @@ import { load, save, uid, newCharacter, exportJson, importJson, requestPersisten
 import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js';
 import { fetchSpell } from './import.js';
 
-const APP_VERSION = 'v7'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v9'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false };
@@ -235,7 +235,7 @@ function renderTracker() {
       <div class="hp-bar"><div class="fill ${low ? 'low' : ''}" style="width:${pct}%"></div><div class="tmp" style="width:${tpct}%"></div></div>
       <div class="hp-input">
         <button class="btn solid-danger" data-action="dmg">− Урон</button>
-        <input type="number" inputmode="numeric" id="hpVal" placeholder="0" min="0">
+        <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" id="hpVal" placeholder="0" min="0">
         <button class="btn ok" data-action="heal">＋ Лечение</button>
       </div>
       <div class="hp-extra">
@@ -282,7 +282,7 @@ function renderCharacter() {
       <label class="field"><span>Имя</span><input type="text" data-bind="name" value="${esc(c.name)}"></label>
       <div class="grid2">
         <label class="field"><span>Класс</span><input type="text" data-bind="cls" value="${esc(c.cls)}" placeholder="Волшебник"></label>
-        <label class="field"><span>Уровень</span><input type="number" inputmode="numeric" min="1" max="20" data-bind="level" value="${c.level}"></label>
+        <label class="field"><span>Уровень</span><input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" min="1" max="20" data-bind="level" value="${c.level}"></label>
       </div>
       <label class="field"><span>Редакция правил по умолчанию</span>
         <select data-bind="edition">
@@ -322,14 +322,14 @@ function renderCharacter() {
       <label class="field"><span>Свой прокси для загрузки по ссылке (необязательно)</span>
         <input type="url" data-setting="customProxy" value="${esc(state.settings.customProxy)}" placeholder="https://my-proxy.workers.dev/?url={url}"></label>
       <div class="hint">Если загрузка по ссылке не работает — см. README про бесплатный прокси на Cloudflare Workers. Вставка текста работает всегда.</div>
-      <div class="hint">Версия приложения: ${APP_VERSION}</div>
     </div>`;
 }
 
 /* ---------------- нижний лист ---------------- */
 
-function openSheet(html) {
+function openSheet(html, pos = 'bottom') {
   sheet.innerHTML = html;
+  sheetEl.classList.toggle('top', pos === 'top');
   sheetEl.hidden = false;
 }
 function closeSheet() {
@@ -343,17 +343,23 @@ sheetEl.addEventListener('click', (e) => {
 function askNumber(title, value, onOk) {
   openSheet(`
     <h2>${esc(title)}<button class="btn icon x" data-action="close">×</button></h2>
-    <input type="number" inputmode="numeric" id="numVal" value="${value}">
-    <div class="row" style="margin-top:12px"><button class="btn primary block" id="numOk">Сохранить</button></div>`);
+    <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" id="numVal" class="num-big" value="${value}">
+    <div class="num-steps">
+      ${[-5, -1, 1, 5].map((d) => `<button class="btn" data-step="${d}">${d > 0 ? '+' + d : '−' + -d}</button>`).join('')}
+    </div>
+    <button class="btn primary block" id="numOk">Сохранить</button>`, 'top');
   const inp = $('#numVal');
   inp.focus();
   inp.select();
   const ok = () => {
-    const v = parseInt(inp.value, 10);
-    if (Number.isNaN(v)) return;
+    const v = parseInt(inp.value.replace(/[^\d-]/g, ''), 10);
+    if (Number.isNaN(v)) return toast('Введите число');
     closeSheet();
     onOk(v);
   };
+  sheet.querySelectorAll('[data-step]').forEach((b) => (b.onclick = () => {
+    inp.value = Math.max(0, (parseInt(inp.value, 10) || 0) + Number(b.dataset.step));
+  }));
   $('#numOk').onclick = ok;
   inp.onkeydown = (e) => {
     if (e.key === 'Enter') ok();
@@ -457,7 +463,7 @@ function openSpellForm(spell, isNew = !spell.id) {
       </select></label>
       <div class="grid2" id="freeLimited" ${freeMode === 'limited' ? '' : 'hidden'}>
         <label class="field"><span>Сколько раз</span>
-          <input type="number" inputmode="numeric" name="freeMax" min="1" max="20" value="${spell.freeMax || 1}"></label>
+          <input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" name="freeMax" min="1" max="20" value="${spell.freeMax || 1}"></label>
         <label class="field"><span>Восстанавливается</span><select name="freeReset">
           ${['long', 'short', 'none'].map((r) => `<option value="${r}" ${(spell.freeReset || 'long') === r ? 'selected' : ''}>${RESET_NAME[r]}</option>`).join('')}
         </select></label>
@@ -566,7 +572,7 @@ function openResForm(res) {
     <h2>${isNew ? 'Новый ресурс' : 'Ресурс'}<button class="btn icon x" data-action="close">×</button></h2>
     <form id="resForm">
       <label class="field"><span>Название</span><input type="text" name="name" value="${esc(res.name)}" placeholder="Кости хитов, Ярость, Канал божественности…" required></label>
-      <label class="field"><span>Максимум</span><input type="number" inputmode="numeric" name="max" min="1" value="${res.max}"></label>
+      <label class="field"><span>Максимум</span><input type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" name="max" min="1" value="${res.max}"></label>
       <label class="field"><span>Восстанавливается</span><select name="reset">
         <option value="short" ${res.reset === 'short' ? 'selected' : ''}>Короткий отдых (и длинный)</option>
         <option value="long" ${res.reset === 'long' ? 'selected' : ''}>Длинный отдых</option>
@@ -818,6 +824,7 @@ function handleShare() {
   else openAddSpell({ mode: 'text', text, url });
 }
 
+$('#appVer').textContent = APP_VERSION;
 applyTheme();
 render();
 requestPersistence();

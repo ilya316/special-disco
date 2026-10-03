@@ -256,3 +256,11 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .sheet .btn.block { flex-direction: column; gap: 0; height: auto; padding: 8px 14px; }
 .sheet .btn.block .muted { font-weight: 400; font-size: 13px; }
 .btn.primary .muted { color: rgba(255,255,255,.8); }
+.topbar { display: flex; align-items: center; gap: 8px; }
+.char-switch { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.app-ver { flex: none; font-size: 12px; color: var(--muted); }
+.sheet-backdrop.top { align-items: flex-start; }
+.sheet-backdrop.top .sheet { border-radius: 0 0 18px 18px; padding-top: calc(16px + env(safe-area-inset-top)); animation-name: down; }
+@keyframes down { from { transform: translateY(-40px); } }
+.num-big { font-size: 28px; font-weight: 700; text-align: center; min-height: 56px; }
+.num-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; }
