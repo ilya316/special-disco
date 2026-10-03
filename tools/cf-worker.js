@@ -67,23 +67,27 @@ let tableReady = false;
 async function ensureTable(db) {
   if (tableReady) return;
   await db.prepare('CREATE TABLE IF NOT EXISTS states (code TEXT PRIMARY KEY, data TEXT NOT NULL, updated INTEGER NOT NULL)').run();
+  try {
+    await db.prepare('ALTER TABLE states ADD COLUMN rev INTEGER NOT NULL DEFAULT 0').run();
+  } catch {} // колонка уже есть
+  await db.prepare('CREATE TABLE IF NOT EXISTS history (code TEXT NOT NULL, rev INTEGER NOT NULL, data TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (code, rev))').run();
   tableReady = true;
 }
 
-// Объединение по персонажам: побеждает более свежий updatedAt; удаление (deleted[id]) побеждает более старые правки.
-function merge(a, b) {
-  const deleted = { ...a.deleted };
-  for (const [id, t] of Object.entries(b.deleted || {})) deleted[id] = Math.max(deleted[id] || 0, Number(t) || 0);
-  const byId = new Map();
-  for (const c of [...(a.characters || []), ...(b.characters || [])]) {
-    if (!c || typeof c.id !== 'string') continue;
-    const cur = byId.get(c.id);
-    if (!cur || (Number(c.updatedAt) || 0) > (Number(cur.updatedAt) || 0)) byId.set(c.id, c);
-  }
-  const characters = [...byId.values()].filter((c) => !(deleted[c.id] >= (Number(c.updatedAt) || 0)));
-  return { characters, deleted };
+const HISTORY_KEEP = 50;
+
+function summary(data) {
+  const chars = (data.characters || []).map((c) => ({
+    name: c.name || '—',
+    spells: (c.spells || []).length,
+    items: (c.items || []).length,
+  }));
+  return { chars };
 }
 
+// Протокол (v14+): клиент сам объединяет данные (трёхстороннее слияние) и записывает результат,
+// только если с момента чтения никто не успел записать новую версию (rev). Старые версии приложения
+// объединяли персонажей целиком и теряли данные — их запросы отклоняются.
 async function sync(request, env, cors) {
   if (!env.DB) return json({ error: 'База не подключена' }, 500, cors);
   if (request.method !== 'POST') return json({ error: 'POST only' }, 405, cors);
@@ -93,14 +97,55 @@ async function sync(request, env, cors) {
   if (!CODE_RE.test(body.code || '')) return json({ error: 'Неверный код синхронизации' }, 400, cors);
 
   await ensureTable(env.DB);
-  const row = await env.DB.prepare('SELECT data FROM states WHERE code = ?').bind(body.code).first();
-  const stored = row ? JSON.parse(row.data) : { characters: [], deleted: {} };
-  if (body.peek) return json({ ...stored, existed: !!row }, 200, cors);
-  const merged = merge(stored, { characters: body.characters || [], deleted: body.deleted || {} });
-  const out = JSON.stringify(merged);
-  if (!row || out !== row.data) {
-    await env.DB.prepare('INSERT INTO states (code, data, updated) VALUES (?, ?, ?) ON CONFLICT(code) DO UPDATE SET data = excluded.data, updated = excluded.updated')
-      .bind(body.code, out, Date.now()).run();
+  const db = env.DB;
+  const row = await db.prepare('SELECT data, rev FROM states WHERE code = ?').bind(body.code).first();
+  const stored = row ? JSON.parse(row.data) : { characters: [] };
+  const rev = row ? row.rev : 0;
+
+  if (body.peek) {
+    return json({ characters: stored.characters || [], rev, existed: !!row }, 200, cors);
   }
-  return json({ ...merged, existed: !!row }, 200, cors);
+
+  if (body.put) {
+    if (!Array.isArray(body.characters)) return json({ error: 'Нет данных' }, 400, cors);
+    if (body.baseRev !== rev) {
+      return json({ conflict: true, characters: stored.characters || [], rev, existed: !!row }, 409, cors);
+    }
+    const now = Date.now();
+    const out = JSON.stringify({ characters: body.characters });
+    const next = rev + 1;
+    let res;
+    if (row) {
+      res = await db.prepare('UPDATE states SET data = ?, updated = ?, rev = ? WHERE code = ? AND rev = ?')
+        .bind(out, now, next, body.code, rev).run();
+    } else {
+      res = await db.prepare('INSERT INTO states (code, data, updated, rev) VALUES (?, ?, ?, ?) ON CONFLICT(code) DO NOTHING')
+        .bind(body.code, out, now, next).run();
+    }
+    if (!res.meta.changes) {
+      const fresh = await db.prepare('SELECT data, rev FROM states WHERE code = ?').bind(body.code).first();
+      return json({ conflict: true, characters: JSON.parse(fresh.data).characters || [], rev: fresh.rev, existed: true }, 409, cors);
+    }
+    await db.batch([
+      // предыдущая версия тоже должна быть в истории (данные, записанные до появления истории)
+      ...(row ? [db.prepare('INSERT OR IGNORE INTO history (code, rev, data, created) VALUES (?, ?, ?, ?)').bind(body.code, rev, row.data, now - 1)] : []),
+      db.prepare('INSERT OR REPLACE INTO history (code, rev, data, created) VALUES (?, ?, ?, ?)').bind(body.code, next, out, now),
+      db.prepare('DELETE FROM history WHERE code = ? AND rev <= ?').bind(body.code, next - HISTORY_KEEP),
+    ]);
+    return json({ ok: true, rev: next }, 200, cors);
+  }
+
+  if (body.history) {
+    const { results } = await db.prepare('SELECT rev, created, data FROM history WHERE code = ? ORDER BY rev DESC LIMIT ?')
+      .bind(body.code, HISTORY_KEEP).all();
+    return json({ versions: results.map((r) => ({ rev: r.rev, created: r.created, ...summary(JSON.parse(r.data)) })) }, 200, cors);
+  }
+
+  if (body.historyRev) {
+    const r = await db.prepare('SELECT data, created FROM history WHERE code = ? AND rev = ?').bind(body.code, body.historyRev).first();
+    if (!r) return json({ error: 'Версия не найдена' }, 404, cors);
+    return json({ characters: JSON.parse(r.data).characters || [], created: r.created }, 200, cors);
+  }
+
+  return json({ error: 'Обновите приложение: закройте его полностью и откройте снова.', outdated: true }, 426, cors);
 }
