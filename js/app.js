@@ -13,6 +13,7 @@ const sheet = $('.sheet', sheetEl);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const char = () => state.characters.find((c) => c.id === state.activeId);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const RESET_NAME = { long: 'длинный отдых', short: 'короткий отдых', none: 'вручную' };
 const levelName = (l) => (l === 0 ? 'Заговоры' : `${l} уровень`);
 
 function commit() {
@@ -109,6 +110,7 @@ function spellCard(s) {
     s.concentration ? '<span class="tag" title="Концентрация">К</span>' : '',
     s.ritual ? '<span class="tag" title="Ритуал">Р</span>' : '',
     s.edition === '2024' ? '<span class="tag ed">24</span>' : '',
+    s.freeMax ? `<span class="tag free" title="Без ячейки">◇${s.freeMax - (s.freeUsed || 0)}/${s.freeMax}</span>` : '',
   ].join('');
   const sub = [s.castTime, s.range, s.components && s.components.replace(/\s*\(.*\)/, '')].filter(Boolean).join(' · ');
   let body = '';
@@ -116,6 +118,7 @@ function spellCard(s) {
     const props = [
       ['Школа', s.school], ['Время', s.castTime], ['Дистанция', s.range], ['Компоненты', s.components],
       ['Длительность', s.duration], ['Классы', s.classes], ['Подклассы', s.subclasses], ['Источник', s.source],
+      ['Без ячейки', s.freeMax ? `${s.freeMax - (s.freeUsed || 0)} из ${s.freeMax} (${RESET_NAME[s.freeReset] || ''})` : ''],
     ].filter(([, v]) => v);
     const paras = (t) => t.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
     body = `<div class="spell-body">
@@ -439,6 +442,14 @@ function openSpellForm(spell, isNew = !spell.id) {
       </div>
       ${f('classes', 'Классы')}
       ${f('source', 'Источник')}
+      <div class="grid2">
+        <label class="field"><span>Раз без ячейки (0 — без лимита)</span>
+          <input type="number" inputmode="numeric" name="freeMax" min="0" max="20" value="${spell.freeMax || 0}"></label>
+        <label class="field"><span>Восстанавливается</span><select name="freeReset">
+          ${['long', 'short', 'none'].map((r) => `<option value="${r}" ${(spell.freeReset || 'long') === r ? 'selected' : ''}>${RESET_NAME[r]}</option>`).join('')}
+        </select></label>
+      </div>
+      <div class="hint" style="margin-top:-6px">Для заклинаний от черт, расы, предметов: «1 раз за длинный отдых без ячейки».</div>
       <label class="field"><span>Описание</span><textarea name="text">${esc(spell.text)}</textarea></label>
       <label class="field"><span>На больших уровнях</span><textarea name="higher" style="min-height:80px">${esc(spell.higher)}</textarea></label>
       <div class="grid2">
@@ -461,6 +472,9 @@ function openSpellForm(spell, isNew = !spell.id) {
     data.level = Number(fd.get('level'));
     data.concentration = fd.get('concentration') === 'on';
     data.ritual = fd.get('ritual') === 'on';
+    data.freeMax = clamp(parseInt(fd.get('freeMax'), 10) || 0, 0, 20);
+    data.freeReset = fd.get('freeReset') || 'long';
+    data.freeUsed = Math.min(spell.freeUsed || 0, data.freeMax);
     if (!data.name) return toast('Укажите название');
     const c = char();
     if (isNew) {
@@ -493,16 +507,32 @@ function openCast(spell) {
   if (c.pact.max && c.pact.level >= spell.level) opts.push({ kind: 'pact', l: c.pact.level, left: c.pact.max - c.pact.used });
   openSheet(`
     <h2>${esc(spell.name)}<button class="btn icon x" data-action="close">×</button></h2>
-    <div class="hint">Какую ячейку потратить?</div>
+    <div class="hint">Потратить ячейку:</div>
     ${opts.length ? opts.map((o, i) => `
       <button class="btn block" style="margin-bottom:8px" data-cast="${i}" ${o.left <= 0 ? 'disabled' : ''}>
         ${o.kind === 'pact' ? 'Ячейка колдуна' : 'Ячейка'} ${o.l} ур. <span class="muted">(осталось ${o.left})</span>
-      </button>`).join('') : `<div class="muted">Подходящие ячейки не настроены — задайте их во вкладке «Трекер».</div>`}
-    ${spell.ritual ? `<button class="btn block" data-cast="ritual">Как ритуал (без ячейки)</button>` : ''}`);
+      </button>`).join('') : `<div class="muted">Подходящих ячеек нет — их можно настроить во вкладке «Трекер».</div>`}
+    <div class="hint" style="margin-top:14px">Без траты ячейки:</div>
+    ${spell.freeMax ? `<button class="btn block" style="margin-bottom:8px" data-cast="free" ${spell.freeMax - (spell.freeUsed || 0) <= 0 ? 'disabled' : ''}>
+        ◇ Бесплатно <span class="muted">(осталось ${spell.freeMax - (spell.freeUsed || 0)} из ${spell.freeMax}, ${RESET_NAME[spell.freeReset] || ''})</span></button>` : ''}
+    ${spell.ritual ? `<button class="btn block" style="margin-bottom:8px" data-cast="ritual">Как ритуал (+10 минут)</button>` : ''}
+    <button class="btn block" data-cast="nocost">Просто сотворить, ничего не тратя</button>
+    ${spell.freeUsed ? `<button class="btn link small block" style="margin-top:8px" data-cast="free-reset">Восстановить бесплатные использования</button>` : ''}`);
   sheet.querySelectorAll('[data-cast]').forEach((b) => (b.onclick = () => {
     const k = b.dataset.cast;
     closeSheet();
     if (k === 'ritual') return toast(`${spell.name}: ритуал (+10 минут)`);
+    if (k === 'nocost') return toast(`${spell.name}: сотворено без ячейки`);
+    if (k === 'free-reset') {
+      spell.freeUsed = 0;
+      toast(`${spell.name}: бесплатные использования восстановлены`);
+      return commit();
+    }
+    if (k === 'free') {
+      spell.freeUsed = (spell.freeUsed || 0) + 1;
+      toast(`${spell.name}: бесплатно, осталось ${spell.freeMax - spell.freeUsed}`);
+      return commit();
+    }
     const o = opts[Number(k)];
     if (o.kind === 'pact') c.pact.used++;
     else c.slots[o.l].used++;
@@ -671,10 +701,12 @@ const actions = {
       for (const l in c.slots) c.slots[l].used = 0;
       c.pact.used = 0;
       c.resources.forEach((r) => { if (r.reset !== 'none') r.cur = r.max; });
+      c.spells.forEach((s) => { if (s.freeReset !== 'none') s.freeUsed = 0; });
       toast('Длинный отдых завершён');
     } else {
       c.pact.used = 0;
       c.resources.forEach((r) => { if (r.reset === 'short') r.cur = r.max; });
+      c.spells.forEach((s) => { if (s.freeReset === 'short') s.freeUsed = 0; });
       toast('Короткий отдых: восстановлены ячейки колдуна и ресурсы короткого отдыха');
     }
     commit();

@@ -231,7 +231,7 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
   border-radius: 18px 18px 0 0; padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
   animation: up .18s ease-out;
 }
-@keyframes up { from { transform: translateY(40px); opacity: .5; } }
+@keyframes up { from { transform: translateY(40px); } }
 .sheet h2 { margin: 0 0 12px; font-size: 20px; display: flex; align-items: center; }
 .sheet h2 .x { margin-left: auto; }
 .seg { display: flex; background: var(--card-2); border-radius: 10px; padding: 3px; margin-bottom: 12px; }
@@ -252,3 +252,6 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .rest-row .btn, .hp-input .btn { white-space: nowrap; padding: 0 8px; font-size: 15px; }
 
 .inv textarea { min-height: 300px; resize: none; overflow: hidden; line-height: 1.5; }
+.tag.free { background: var(--card-2); color: var(--temp); }
+.sheet .btn.block { flex-direction: column; gap: 0; height: auto; padding: 8px 14px; }
+.sheet .btn.block .muted { font-weight: 400; font-size: 13px; }
