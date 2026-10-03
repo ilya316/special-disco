@@ -4,7 +4,7 @@ const KEY = 'spellbook.v1';
 export const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
 // Свой прокси на Cloudflare Workers (tools/cf-worker.js) — основной способ загрузки по ссылке.
-export const OWN_PROXY = '';
+export const OWN_PROXY = 'https://special-disco.ilyabondar2o0o0o3.workers.dev/?url={url}';
 
 // Публичные прокси — запасной вариант, работают нестабильно.
 export const DEFAULT_PROXIES = [
