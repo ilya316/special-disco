@@ -43,6 +43,7 @@ function render() {
   document.querySelectorAll('.tabbar button').forEach((b) => b.classList.toggle('active', b.dataset.tab === ui.tab));
   if (ui.tab === 'spells') renderSpells();
   else if (ui.tab === 'tracker') renderTracker();
+  else if (ui.tab === 'inventory') renderInventory();
   else renderCharacter();
 }
 
@@ -249,6 +250,21 @@ function renderTracker() {
         <button class="btn link small" data-action="add-res">＋</button></h3>
       ${resHtml}
     </div>`;
+}
+
+function renderInventory() {
+  view.innerHTML = `
+    <div class="card inv">
+      <h3>Инвентарь <span class="spacer"></span><span class="small muted" id="invSaved"></span></h3>
+      <textarea id="invText" placeholder="Длинный меч&#10;Кожаный доспех&#10;Зелье лечения ×2&#10;Верёвка 50 фт&#10;Золото: 35 зм">${esc(char().inventory)}</textarea>
+      <div class="hint">Пишите как удобно — сохраняется автоматически.</div>
+    </div>`;
+  autoGrow($('#invText'));
+}
+
+function autoGrow(t) {
+  t.style.height = 'auto';
+  t.style.height = Math.max(t.scrollHeight + 2, 300) + 'px';
 }
 
 function renderCharacter() {
@@ -689,10 +705,20 @@ document.addEventListener('click', (e) => {
   fn(el.dataset);
 });
 
+let invTimer;
 document.addEventListener('input', (e) => {
   if (e.target.id === 'spellSearch') {
     ui.search = e.target.value;
     renderSpellList();
+  } else if (e.target.id === 'invText') {
+    char().inventory = e.target.value;
+    autoGrow(e.target);
+    clearTimeout(invTimer);
+    invTimer = setTimeout(() => {
+      save(state);
+      const m = $('#invSaved');
+      if (m) m.textContent = 'сохранено';
+    }, 400);
   }
 });
 

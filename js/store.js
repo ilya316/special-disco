@@ -24,6 +24,7 @@ export function newCharacter(name = 'Новый персонаж') {
     pact: { level: 1, max: 0, used: 0 },
     resources: [],
     spells: [],
+    inventory: '',
   };
 }
 
@@ -48,6 +49,7 @@ function normalize(s) {
     pact: { ...base.pact, ...c.pact },
     resources: c.resources || [],
     spells: c.spells || [],
+    inventory: c.inventory || '',
   }));
   if (!s.characters.some((c) => c.id === s.activeId)) s.activeId = s.characters[0].id;
   s.settings = { customProxy: '', theme: 'auto', ...s.settings };

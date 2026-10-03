@@ -250,3 +250,5 @@ label.field > span { display: block; font-size: 13px; color: var(--muted); margi
 .toast[hidden] { display: none; }
 
 .rest-row .btn, .hp-input .btn { white-space: nowrap; padding: 0 8px; font-size: 15px; }
+
+.inv textarea { min-height: 300px; resize: none; overflow: hidden; line-height: 1.5; }
