@@ -2,6 +2,7 @@ import { load, save, uid, newCharacter, normalizeCharacter, exportJson, importJs
 import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js';
 import { fetchSpell } from './import.js';
 import { sanitizeHtml } from './richtext.js';
+import { printSheet, downloadLss } from './export.js';
 import {
   ABILITIES, ABIL_SHORT, SKILLS, SIZES, COINS, COIN_NAME, mod, fmtMod, profBonus, skillBonus, saveBonus,
   capacity, jumps, carried, coinsTotal, itemsValue, fmtNum, restoreHitDice,
@@ -11,7 +12,7 @@ import {
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v16'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v17'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -650,6 +651,16 @@ function renderCharacter() {
         </div>`).join('')}
     </div>
 
+    <div class="card">
+      <h3>Экспорт персонажа</h3>
+      <div class="hint">«${esc(c.name)}»: лист персонажа для печати или PDF и файл для Long Story Short
+        (там: «Мои персонажи» → «Загрузить .json»).</div>
+      <div class="row wrap">
+        <button class="btn" data-action="print-sheet">🖨 Лист / PDF</button>
+        <button class="btn" data-action="lss-export">⬇ Для Long Story Short</button>
+      </div>
+    </div>
+
     ${syncCard()}
 
     <div class="card">
@@ -806,6 +817,29 @@ async function doRestore(characters) {
   await restoreCharacters(characters);
   toast('Восстановлено');
   render();
+}
+
+function openPrintOptions() {
+  const o = { spellText: true, inventory: true, notes: true, ...state.settings.print };
+  const chk = (k, label) => `<label class="check"><input type="checkbox" name="${k}" ${o[k] ? 'checked' : ''}> ${label}</label>`;
+  openSheet(`
+    <h2>Лист персонажа<button class="btn icon x" data-action="close">×</button></h2>
+    <form id="printForm">
+      ${chk('spellText', 'Полные описания заклинаний')}
+      ${chk('inventory', 'Снаряжение и монеты')}
+      ${chk('notes', 'Заметки')}
+      <div class="hint">Откроется окно печати. Чтобы получить файл, выберите принтер «Сохранить как PDF».</div>
+      <button class="btn primary block" type="submit">🖨 Печать / PDF</button>
+    </form>`);
+  $('#printForm').onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const opts = { spellText: fd.has('spellText'), inventory: fd.has('inventory'), notes: fd.has('notes') };
+    state.settings.print = opts; // запомнить выбор на этом устройстве
+    save(state);
+    closeSheet();
+    printSheet(char(), opts);
+  };
 }
 
 function syncIndicator(s) {
@@ -1315,6 +1349,11 @@ const actions = {
     commit();
   },
   export: () => exportJson(state),
+  'lss-export': () => {
+    downloadLss(char());
+    toast('Файл для Long Story Short сохранён');
+  },
+  'print-sheet': () => openPrintOptions(),
   'sync-create': async () => {
     try {
       await createSync();

@@ -359,3 +359,58 @@ button.level-head { width: calc(100% - 4px); background: none; border: 0; paddin
 .combat-tile.insp .v { color: var(--muted); }
 .combat-tile.insp.on { background: var(--accent); border-color: var(--accent); }
 .combat-tile.insp.on .v, .combat-tile.insp.on .l { color: #fff; }
+
+/* ===== лист персонажа для печати ===== */
+#print { display: none; }
+@media print {
+  @page { size: A4; margin: 12mm; }
+  html, body { background: #fff !important; color: #111 !important; padding: 0 !important; min-height: 0; }
+  body > *:not(#print) { display: none !important; }
+  #print { display: block; }
+}
+.psheet { font: 10.5pt/1.35 "Segoe UI", Roboto, Arial, sans-serif; color: #111; }
+.psheet b { font-weight: 700; }
+.ph { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #111; padding-bottom: 4px; margin-bottom: 8px; }
+.ph-name { font-size: 20pt; font-weight: 800; line-height: 1.1; }
+.ph-sub { color: #444; }
+.ph-insp { font-weight: 700; }
+.prow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; margin-bottom: 8px; }
+.pb { border: 1px solid #999; border-radius: 6px; padding: 4px 2px; text-align: center; break-inside: avoid; }
+.pb b { display: block; font-size: 13pt; }
+.pb span { font-size: 7.5pt; color: #555; }
+.pcols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ph2 { font-size: 10pt; text-transform: uppercase; letter-spacing: .06em; border-bottom: 1px solid #999; margin: 8px 0 4px; padding-bottom: 2px; }
+.ph3 { font-size: 10pt; margin: 6px 0 2px; color: #333; }
+.pabil { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
+.pa { border: 1px solid #999; border-radius: 6px; text-align: center; padding: 3px; break-inside: avoid; }
+.pa-n { font-size: 8pt; text-transform: uppercase; color: #444; }
+.pa-m { font-size: 15pt; font-weight: 800; line-height: 1.1; }
+.pa-s { display: inline-block; border: 1px solid #999; border-radius: 99px; padding: 0 8px; font-size: 9pt; }
+.pa-sv { font-size: 8pt; color: #333; margin-top: 2px; }
+.pkv div { display: flex; justify-content: space-between; border-bottom: 1px dotted #bbb; padding: 1px 0; }
+.ps { padding: 1px 0; border-bottom: 1px dotted #ddd; }
+.ps b { display: inline-block; min-width: 24px; text-align: right; }
+.ps span { color: #777; font-size: 8pt; }
+.pnote { font-size: 8pt; color: #666; margin-top: 3px; }
+.pr { padding: 1px 0; }
+.pr span { color: #777; font-size: 8pt; }
+.psec { margin-top: 6px; }
+.pslots { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 4px; }
+.pspells-cols { columns: 2; column-gap: 14px; }
+.psp { break-inside: avoid; padding: 2px 0 4px; border-bottom: 1px dotted #ccc; }
+.psp-h span { color: #666; font-size: 8.5pt; }
+.psp-h i { font-style: normal; color: #444; font-size: 8.5pt; }
+.psp-m { font-size: 8.5pt; color: #444; }
+.psp-t { font-size: 9pt; margin-top: 2px; }
+.psp-t p { margin: 0 0 3px; }
+.psp-hi { border-left: 2px solid #999; padding-left: 6px; }
+.pcoins { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 4px; }
+.pt { width: 100%; border-collapse: collapse; font-size: 9pt; }
+.pt th, .pt td { border-bottom: 1px solid #ccc; padding: 2px 4px; text-align: left; vertical-align: top; }
+.pt th { font-size: 8pt; text-transform: uppercase; color: #555; }
+.pt-n { font-size: 8pt; color: #666; }
+.pt-tot td { font-weight: 700; border-top: 1px solid #111; }
+.ptext p, .pnotes p { margin: 0 0 4px; }
+.pnotes h3 { font-size: 11pt; margin: 6px 0 2px; }
+.pnotes ul, .pnotes ol { margin: 2px 0; padding-left: 18px; }
+.pnotes blockquote { margin: 4px 0; padding-left: 8px; border-left: 2px solid #999; color: #444; }
