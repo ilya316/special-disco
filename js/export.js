@@ -7,6 +7,8 @@ import {
 import { sanitizeHtml } from './richtext.js';
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const PROF_LABELS = [['armor', 'Доспехи'], ['weapons', 'Оружие'], ['tools', 'Инструменты'], ['languages', 'Языки']];
+const SUB_INFO = [['age', 'возраст'], ['height', 'рост'], ['weight', 'вес'], ['eyes', 'глаза'], ['skin', 'кожа'], ['hair', 'волосы']];
 const initiative = (c) => mod(c.abilities.dex) + (Number(c.initBonus) || 0);
 const rnd = () => Math.random().toString(36).slice(2, 10);
 
@@ -164,6 +166,21 @@ export function toLss(c) {
   text.traits = tDoc('traits', traits);
   text['notes-1'] = tDoc('notes-1', htmlToTiptap(c.notesHtml || ''));
 
+  // владения и языки — один блок «prof», как в LSS
+  const bio = c.bio || {};
+  const prof = c.prof || {};
+  text.prof = tDoc('prof', PROF_LABELS.filter(([k]) => (prof[k] || '').trim())
+    .map(([k, label]) => tPara(tText(label + ': ', ['bold']), tText(prof[k].trim()))));
+  // в LSS нет отдельного поля для описания внешности — кладём его в начало предыстории
+  const lines = (s) => String(s || '').split('\n').filter((l) => l.trim()).map((l) => tPara(tText(l)));
+  text.background = tDoc('background', [
+    ...((bio.appearance || '').trim() ? [tPara(tText('Внешность', ['bold'])), ...lines(bio.appearance), tPara()] : []),
+    ...lines(bio.backstory),
+  ]);
+  for (const k of ['personality', 'ideals', 'bonds', 'flaws']) {
+    text[k] = tDoc(k, lines(bio[k === 'personality' ? 'traits' : k]));
+  }
+
   const info = (name, label, value) => ({ name, label, value });
   const data = {
     isDefault: true,
@@ -173,12 +190,13 @@ export function toLss(c) {
     info: {
       charClass: info('charClass', 'класс и уровень', c.cls || ''),
       level: info('level', 'уровень', Number(c.level) || 1),
-      background: info('background', 'предыстория', ''),
+      background: info('background', 'предыстория', bio.background || ''),
       playerName: info('playerName', 'имя игрока', ''),
-      race: info('race', 'раса', ''),
-      alignment: info('alignment', 'мировоззрение', ''),
+      race: info('race', 'раса', bio.race || ''),
+      alignment: info('alignment', 'мировоззрение', bio.alignment || ''),
       experience: info('experience', 'опыт', 0),
     },
+    subInfo: Object.fromEntries(SUB_INFO.map(([k, label]) => [k, info(k, label, bio[k] || '')])),
     proficiency: pb,
     stats,
     saves,
@@ -234,6 +252,15 @@ export function sheetHtml(c, opts = {}) {
   const w = carried(c);
   const j = jumps(c);
   const marker = (lvl) => (lvl === 2 ? '◉' : lvl === 1 ? '●' : '○');
+  const bio = c.bio || {};
+  const prof = c.prof || {};
+  const profHtml = PROF_LABELS.filter(([k]) => (prof[k] || '').trim())
+    .map(([k, label]) => `<div class="pkv2"><b>${label}:</b> ${esc(prof[k].trim())}</div>`).join('');
+  const looks = SUB_INFO.filter(([k]) => (bio[k] || '').trim())
+    .map(([k, label]) => `<span>${label[0].toUpperCase() + label.slice(1)}: <b>${esc(bio[k])}</b></span>`).join('');
+  const persona = [['traits', 'Черты характера'], ['ideals', 'Идеалы'], ['bonds', 'Привязанности'], ['flaws', 'Слабости']]
+    .filter(([k]) => (bio[k] || '').trim())
+    .map(([k, label]) => `<div class="pkv2"><b>${label}:</b> ${esc(bio[k]).replace(/\n/g, '<br>')}</div>`).join('');
   const hdText = c.hitDice.map((h) => `${h.max - h.used}/${h.max} к${h.die}`).join(', ');
 
   const abilities = ABILITIES.map(([k, short, name]) => `
@@ -286,7 +313,7 @@ export function sheetHtml(c, opts = {}) {
   <div class="psheet">
     <header class="ph">
       <div><div class="ph-name">${esc(c.name)}</div>
-        <div class="ph-sub">${esc([c.cls, `${c.level} уровень`, `D&D 5e ${c.edition}`].filter(Boolean).join(' · '))}</div></div>
+        <div class="ph-sub">${esc([c.cls, `${c.level} уровень`, bio.race, bio.background, bio.alignment, `D&D 5e ${c.edition}`].filter(Boolean).join(' · '))}</div></div>
       <div class="ph-insp">${c.inspiration ? '★ Вдохновение' : ''}</div>
     </header>
 
@@ -318,6 +345,7 @@ export function sheetHtml(c, opts = {}) {
         <div class="pskills">${skills}</div>
         <div class="pnote">● владение · ◉ компетентность${c.jack ? ' · мастер на все руки' : ''}</div>
         ${resources ? `<h2 class="ph2">Ресурсы</h2>${resources}` : ''}
+        ${profHtml ? `<h2 class="ph2">Владения и языки</h2>${profHtml}` : ''}
       </div>
     </section>
 
@@ -336,6 +364,15 @@ export function sheetHtml(c, opts = {}) {
         <span>≈ ${fmtNum(coinsTotal(c.coins))} зм</span></div>
       ${items}
       ${c.inventory ? `<div class="ptext">${paras(c.inventory)}</div>` : ''}
+    </section>` : ''}
+
+    ${looks || (bio.appearance || '').trim() || (bio.backstory || '').trim() || persona ? `
+    <section class="psec">
+      <h2 class="ph2">О персонаже</h2>
+      ${looks ? `<div class="pcoins">${looks}</div>` : ''}
+      ${(bio.appearance || '').trim() ? `<div class="ptext"><b>Внешность.</b> ${paras(bio.appearance)}</div>` : ''}
+      ${persona}
+      ${(bio.backstory || '').trim() ? `<div class="ptext"><b>Предыстория.</b> ${paras(bio.backstory)}</div>` : ''}
     </section>` : ''}
 
     ${opts.notes && (c.notesHtml || '').trim() ? `

@@ -414,3 +414,8 @@ button.level-head { width: calc(100% - 4px); background: none; border: 0; paddin
 .pnotes h3 { font-size: 11pt; margin: 6px 0 2px; }
 .pnotes ul, .pnotes ol { margin: 2px 0; padding-left: 18px; }
 .pnotes blockquote { margin: 4px 0; padding-left: 8px; border-left: 2px solid #999; color: #444; }
+
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 8px; }
+.pkv2 { padding: 1px 0; }
+.ptext b { font-weight: 700; }
+textarea.autogrow { min-height: 0; resize: none; overflow: hidden; }

@@ -12,7 +12,7 @@ import {
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v17'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v18'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -559,8 +559,55 @@ function renderSheet() {
         <dt>Прыжок в высоту</dt><dd>${j.highRun} фт. с разбега · ${j.highStand} фт. с места</dd>
       </dl>
       <div class="hint">Разбег — не менее 10 фт. перед прыжком. Всё считается от Силы.</div>
+    </div>
+
+    <div class="card">
+      <h3>О персонаже <span class="spacer"></span><span class="small muted" id="bioSaved"></span></h3>
+      <div class="grid2">${tField('bio.race', 'Раса / вид', 'Высший эльф')}${tField('bio.background', 'Предыстория', 'Мудрец')}</div>
+      ${tField('bio.alignment', 'Мировоззрение', 'Нейтрально-добрый')}
+    </div>
+
+    <div class="card">
+      <h3>Владения и языки <span class="spacer"></span><span class="small muted" id="profSaved"></span></h3>
+      ${tArea('prof.armor', 'Доспехи', 'Лёгкие, средние, щиты')}
+      ${tArea('prof.weapons', 'Оружие', 'Простое, длинные мечи')}
+      ${tArea('prof.tools', 'Инструменты', 'Воровские инструменты, набор травника')}
+      ${tArea('prof.languages', 'Языки', 'Общий, эльфийский')}
+    </div>
+
+    <div class="card">
+      <h3>Внешность</h3>
+      <div class="grid3">
+        ${tField('bio.age', 'Возраст')}${tField('bio.height', 'Рост')}${tField('bio.weight', 'Вес')}
+        ${tField('bio.eyes', 'Глаза')}${tField('bio.skin', 'Кожа')}${tField('bio.hair', 'Волосы')}
+      </div>
+      ${tArea('bio.appearance', 'Описание внешности', 'Шрам через бровь, всегда в выцветшем синем плаще…', 100)}
+    </div>
+
+    <div class="card">
+      <h3>Предыстория и личность</h3>
+      ${tArea('bio.backstory', 'История персонажа', 'Откуда он, что с ним случилось, почему он отправился в путь…', 200)}
+      ${tArea('bio.traits', 'Черты характера')}
+      ${tArea('bio.ideals', 'Идеалы')}
+      ${tArea('bio.bonds', 'Привязанности')}
+      ${tArea('bio.flaws', 'Слабости')}
+      <div class="hint">Сохраняется автоматически.</div>
     </div>`;
+  view.querySelectorAll('textarea.autogrow').forEach(autoGrow);
 }
+
+// Поля с автосохранением; path — «bio.race», «prof.languages» и т.п.
+const getPath = (obj, path) => path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+function setPath(obj, path, value) {
+  const keys = path.split('.');
+  const last = keys.pop();
+  const target = keys.reduce((o, k) => (o[k] && typeof o[k] === 'object' ? o[k] : (o[k] = {})), obj);
+  target[last] = value;
+}
+const tField = (path, label, ph = '') =>
+  `<label class="field"><span>${label}</span><input type="text" data-text="${path}" value="${esc(getPath(char(), path) || '')}" placeholder="${esc(ph)}"></label>`;
+const tArea = (path, label, ph = '', min = 60) =>
+  `<label class="field"><span>${label}</span><textarea class="autogrow" data-min="${min}" data-text="${path}" placeholder="${esc(ph)}">${esc(getPath(char(), path) || '')}</textarea></label>`;
 
 function openItemForm(item) {
   const isNew = !item;
@@ -1399,12 +1446,12 @@ document.addEventListener('input', (e) => {
     renderSpellList();
   } else if (t.dataset.text) {
     const key = t.dataset.text;
-    char()[key] = t.value;
-    autoGrow(t);
+    setPath(char(), key, t.value);
+    if (t.tagName === 'TEXTAREA') autoGrow(t);
     clearTimeout(textTimers[key]);
     textTimers[key] = setTimeout(() => {
       persist();
-      const m = $(`#${key}Saved`);
+      const m = $(`#${key.split('.')[0]}Saved`);
       if (m) m.textContent = 'сохранено';
     }, 400);
   }
