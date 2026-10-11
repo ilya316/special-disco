@@ -1,5 +1,5 @@
 // Cloudflare Worker для «Книги заклинаний»:
-//  GET  /?url=https://dnd.su/spells/…  — прокси страниц заклинаний dnd.su
+//  GET  /?url=https://dnd.su/spells/… или /bestiary/…  — прокси страниц заклинаний и бестиария dnd.su
 //  POST /sync                          — синхронизация персонажей между устройствами (база D1)
 // Отвечает только своим сайтам — это не открытый прокси.
 const ALLOWED_ORIGINS = [
@@ -48,8 +48,8 @@ async function proxy(url, cors) {
   } catch {
     return new Response('bad url', { status: 400, headers: cors });
   }
-  if (!/(^|\.)dnd\.su$/.test(target.hostname) || !target.pathname.startsWith('/spells/')) {
-    return new Response('only dnd.su spells', { status: 403, headers: cors });
+  if (!/(^|\.)dnd\.su$/.test(target.hostname) || !/^\/(spells|bestiary)\//.test(target.pathname)) {
+    return new Response('only dnd.su spells and bestiary', { status: 403, headers: cors });
   }
   const r = await fetch(target.toString(), {
     headers: {
