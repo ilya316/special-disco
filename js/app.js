@@ -2,7 +2,8 @@ import { load, save, uid, newCharacter, normalizeCharacter, exportJson, importJs
 import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js';
 import { fetchSpell } from './import.js';
 import { sanitizeHtml } from './richtext.js';
-import { printSheet, downloadLss } from './export.js';
+import { downloadLss } from './export.js';
+import { buildPages, savePdf, spellStats, PAGE_W } from './sheet.js';
 import {
   ABILITIES, ABIL_SHORT, SKILLS, SIZES, COINS, COIN_NAME, mod, fmtMod, profBonus, skillBonus, saveBonus,
   capacity, jumps, carried, coinsTotal, itemsValue, fmtNum, restoreHitDice,
@@ -12,7 +13,7 @@ import {
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v18'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v19'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -544,6 +545,21 @@ function renderSheet() {
     </div>
 
     <div class="card">
+      <h3>Заклинания</h3>
+      <div class="grid2">
+        <label class="field"><span>Заклинательная характеристика</span><select data-sheet="spellAbility">
+          <option value="" ${!c.spellAbility ? 'selected' : ''}>Авто (по классу)</option>
+          ${ABILITIES.map(([k, , n]) => `<option value="${k}" ${c.spellAbility === k ? 'selected' : ''}>${n}</option>`).join('')}
+        </select></label>
+        ${(() => {
+          const ss = spellStats(c);
+          return `<div class="stat-grid" style="grid-template-columns:1fr 1fr;margin:14px 0 0">
+            <div><span>${ss ? ss.dc : '—'}</span>Сл. спасброска</div><div><span>${ss ? fmtMod(ss.attack) : '—'}</span>Бонус атаки</div></div>`;
+        })()}
+      </div>
+    </div>
+
+    <div class="card">
       <h3>Грузоподъёмность и прыжки</h3>
       <div class="grid2">
         <label class="field"><span>Размер</span><select data-sheet="size">
@@ -703,7 +719,7 @@ function renderCharacter() {
       <div class="hint">«${esc(c.name)}»: лист персонажа для печати или PDF и файл для Long Story Short
         (там: «Мои персонажи» → «Загрузить .json»).</div>
       <div class="row wrap">
-        <button class="btn" data-action="print-sheet">🖨 Лист / PDF</button>
+        <button class="btn" data-action="print-sheet">📄 Лист / PDF</button>
         <button class="btn" data-action="lss-export">⬇ Для Long Story Short</button>
       </div>
     </div>
@@ -866,27 +882,74 @@ async function doRestore(characters) {
   render();
 }
 
-function openPrintOptions() {
-  const o = { spellText: true, inventory: true, notes: true, ...state.settings.print };
-  const chk = (k, label) => `<label class="check"><input type="checkbox" name="${k}" ${o[k] ? 'checked' : ''}> ${label}</label>`;
-  openSheet(`
-    <h2>Лист персонажа<button class="btn icon x" data-action="close">×</button></h2>
-    <form id="printForm">
-      ${chk('spellText', 'Полные описания заклинаний')}
-      ${chk('inventory', 'Снаряжение и монеты')}
-      ${chk('notes', 'Заметки')}
-      <div class="hint">Откроется окно печати. Чтобы получить файл, выберите принтер «Сохранить как PDF».</div>
-      <button class="btn primary block" type="submit">🖨 Печать / PDF</button>
-    </form>`);
-  $('#printForm').onsubmit = (e) => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    const opts = { spellText: fd.has('spellText'), inventory: fd.has('inventory'), notes: fd.has('notes') };
-    state.settings.print = opts; // запомнить выбор на этом устройстве
-    save(state);
-    closeSheet();
-    printSheet(char(), opts);
+// Предпросмотр листа персонажа: страницы A4, скачивание PDF и печать
+function openSheetPreview() {
+  const c = char();
+  const o = { cards: true, notes: true, ...state.settings.sheetOpts };
+  const el = $('#print');
+  el.innerHTML = `
+    <div class="pv-bar">
+      <button class="btn icon" data-pv="close" aria-label="Закрыть">×</button>
+      <label><input type="checkbox" data-pv-opt="cards" ${o.cards ? 'checked' : ''}> Карточки заклинаний</label>
+      <label><input type="checkbox" data-pv-opt="notes" ${o.notes ? 'checked' : ''}> Заметки</label>
+      <span class="grow"></span>
+      <button class="btn" data-pv="print">🖨 Печать</button>
+      <button class="btn primary" data-pv="pdf">⬇ Скачать PDF</button>
+      <div class="pv-status" id="pvStatus"></div>
+    </div>
+    <div class="pv-scroll"><div class="pv-outer"><div class="pv-pages"></div></div></div>`;
+  el.classList.add('open');
+  document.body.style.overflow = 'hidden';
+  const stage = el.querySelector('.pv-pages');
+  const outer = el.querySelector('.pv-outer');
+  let pages = [];
+
+  // страницы собираются в натуральную величину (для измерений), на экране — уменьшаются под ширину
+  const layout = () => {
+    const k = Math.min(1, (el.querySelector('.pv-scroll').clientWidth - 16) / PAGE_W);
+    stage.style.transform = `scale(${k})`;
+    outer.style.width = PAGE_W * k + 'px';
+    outer.style.height = stage.scrollHeight * k + 'px';
   };
+  const rebuild = () => {
+    stage.style.transform = 'none';
+    pages = buildPages(stage, c, o);
+    $('#pvStatus').textContent = `Страниц: ${pages.length}`;
+    layout();
+  };
+  const close = () => {
+    el.classList.remove('open');
+    el.innerHTML = '';
+    document.body.style.overflow = '';
+    window.removeEventListener('resize', layout);
+  };
+
+  el.querySelectorAll('[data-pv-opt]').forEach((x) => (x.onchange = () => {
+    o[x.dataset.pvOpt] = x.checked;
+    state.settings.sheetOpts = { ...o };
+    save(state);
+    rebuild();
+  }));
+  el.querySelector('[data-pv=close]').onclick = close;
+  el.querySelector('[data-pv=print]').onclick = () => window.print();
+  el.querySelector('[data-pv=pdf]').onclick = async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    const status = $('#pvStatus');
+    stage.style.transform = 'none'; // снимок делается без уменьшения
+    try {
+      const name = (c.name || 'персонаж').replace(/[\\/:*?"<>|]+/g, '_');
+      await savePdf(pages, `${name} — лист персонажа.pdf`, (i, n) => (status.textContent = `Готовлю PDF: страница ${i} из ${n}…`));
+      status.textContent = 'PDF сохранён';
+    } catch (err) {
+      status.textContent = 'Не получилось: ' + err.message;
+    } finally {
+      layout();
+      btn.disabled = false;
+    }
+  };
+  window.addEventListener('resize', layout);
+  rebuild();
 }
 
 function syncIndicator(s) {
@@ -1400,7 +1463,7 @@ const actions = {
     downloadLss(char());
     toast('Файл для Long Story Short сохранён');
   },
-  'print-sheet': () => openPrintOptions(),
+  'print-sheet': () => openSheetPreview(),
   'sync-create': async () => {
     try {
       await createSync();

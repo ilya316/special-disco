@@ -48,6 +48,7 @@ export function newCharacter(name = 'Новый персонаж') {
     initBonus: 0,
     speed: 30,
     inspiration: false,
+    spellAbility: '',
     bio: {
       race: '', background: '', alignment: '', age: '', height: '', weight: '', eyes: '', skin: '', hair: '',
       appearance: '', backstory: '', traits: '', ideals: '', bonds: '', flaws: '',
