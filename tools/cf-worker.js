@@ -57,10 +57,35 @@ async function proxy(url, cors) {
       'Accept-Language': 'ru-RU,ru;q=0.9',
     },
   });
-  return new Response(await r.text(), {
+  const html = await r.text();
+  return new Response(trimPage(html), {
     status: r.status,
-    headers: { ...cors, 'Content-Type': 'text/html; charset=utf-8' },
+    headers: { ...cors, 'Content-Type': 'text/html; charset=utf-8', 'X-Original-Size': String(html.length) },
   });
+}
+
+// Отдаём только заголовок и блок с описанием (ul.params) — в 10–20 раз меньше всей страницы.
+// Маленькие ответы надёжнее проходят через медленные и «застревающие» соединения.
+function trimPage(html) {
+  const t0 = html.indexOf('<h2 class="card-title"');
+  const t1 = t0 >= 0 ? html.indexOf('</h2>', t0) : -1;
+  const p0 = html.search(/<ul class=['"]params/);
+  if (t1 < 0 || p0 < 0) return html;
+  // конец ul.params с учётом вложенных списков
+  const re = /<\/?ul[\s>]/gi;
+  re.lastIndex = p0 + 3;
+  let depth = 1;
+  let end = -1;
+  for (let m; (m = re.exec(html));) {
+    depth += m[0][1] === '/' ? -1 : 1;
+    if (depth === 0) {
+      end = m.index + 5;
+      break;
+    }
+  }
+  if (end < 0) return html;
+  return '<!doctype html><html><body><div class="card__header">' + html.slice(t0, t1 + 5) + '</div>'
+    + '<div class="card__body">' + html.slice(p0, end) + '</div></body></html>';
 }
 
 let tableReady = false;

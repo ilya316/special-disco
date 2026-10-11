@@ -40,7 +40,8 @@ async function fetchPage(target, customProxy, what) {
   for (const p of proxies) {
     const full = p.includes('{url}') ? p.replace('{url}', encodeURIComponent(target)) : p + encodeURIComponent(target);
     try {
-      const html = await fetchWithTimeout(full, 8000);
+      // свой прокси отвечает быстро, но на медленной связи ему нужно больше времени
+      const html = await fetchWithTimeout(full, p === OWN_PROXY || p === customProxy ? 20000 : 8000);
       if (!html.includes('params')) throw new Error('неожиданный ответ');
       return html;
     } catch (e) {
@@ -49,6 +50,9 @@ async function fetchPage(target, customProxy, what) {
   }
   const err = new Error(`Не удалось загрузить страницу ${what}.`);
   err.details = errors.join('; ');
+  if (errors.every((e) => /таймаут|Failed to fetch|NetworkError/i.test(e))) {
+    err.details += '. Похоже, нет связи с посредником (так бывает у некоторых провайдеров с серверами Cloudflare): попробуйте другую сеть (Wi-Fi / мобильный интернет) или вставьте текст со страницы.';
+  }
   throw err;
 }
 
