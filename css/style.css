@@ -377,3 +377,11 @@ textarea.autogrow { min-height: 0; resize: none; overflow: hidden; }
 .cr-sec { margin: 14px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
 .cr-desc p { margin: 0 0 8px; }
 .cr-desc ul { margin: 4px 0 8px; padding-left: 20px; }
+
+/* правка существа */
+.cr-prop { display: grid; grid-template-columns: 1fr 1.6fr auto; gap: 6px; margin-bottom: 6px; }
+.cr-secedit { border: 1px solid var(--line); border-radius: 12px; padding: 8px; margin-bottom: 10px; background: var(--card); }
+.cr-secedit .row { margin-bottom: 6px; }
+.cr-secedit .cr-st { font-weight: 700; }
+.cr-secedit .rte { min-height: 90px; }
+.cr-rte-bar { position: sticky; top: -16px; z-index: 3; margin: 0 0 6px; padding: 6px 0; }

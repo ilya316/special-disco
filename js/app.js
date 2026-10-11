@@ -14,7 +14,7 @@ import {
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v21'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v22'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -410,11 +410,12 @@ function openCreature(id) {
     commit();
   });
   on('refresh', async () => {
+    if (cr.edited && !confirm('Текст существа правили вручную. Загрузить заново с dnd.su и заменить свойства и разделы?')) return;
     toast('Загрузка с dnd.su…');
     try {
       const fresh = await fetchCreature(cr.url, state.settings.customProxy);
       // блок статистики — с сайта; текущие хиты, роль, имя и заметки — свои
-      const keep = { id: cr.id, role: cr.role, notes: cr.notes, hpCur: Math.min(cr.hpCur, fresh.hpMax), hpTemp: cr.hpTemp };
+      const keep = { id: cr.id, role: cr.role, notes: cr.notes, hpCur: Math.min(cr.hpCur, fresh.hpMax), hpTemp: cr.hpTemp, edited: false };
       Object.assign(cr, fresh, keep);
       toast(`«${cr.name}» обновлено`);
       again();
@@ -494,6 +495,21 @@ function openAddCreature(mode = 'link') {
   body(mode);
 }
 
+const propRow = (p = { label: '', value: '' }) => `
+  <div class="cr-prop">
+    <input type="text" class="cr-pl" value="${esc(p.label)}" placeholder="Навыки">
+    <input type="text" class="cr-pv" value="${esc(p.value)}" placeholder="Скрытность +5">
+    <button type="button" class="btn small icon danger" data-del-row aria-label="Удалить">×</button>
+  </div>`;
+const secRow = (sec = { title: '', html: '' }) => `
+  <div class="cr-secedit">
+    <div class="row">
+      <input type="text" class="cr-st" value="${esc(sec.title)}" placeholder="Действия">
+      <button type="button" class="btn small icon danger" data-del-row aria-label="Удалить раздел">×</button>
+    </div>
+    <div class="rte cr-sb" contenteditable="true" data-placeholder="Текст раздела">${sanitizeHtml(sec.html)}</div>
+  </div>`;
+
 function openCreatureForm(cr, role = 'Фамильяр') {
   const isNew = !cr;
   cr = cr || { ...emptyCreature(), role };
@@ -504,20 +520,93 @@ function openCreatureForm(cr, role = 'Фамильяр') {
       ${f('name', 'Название')}
       ${f('role', 'Кто это для персонажа')}
       <div class="grid3">${f('ac', 'КД', cr.ac, 'num')}${f('hpMax', 'Макс. хиты', cr.hpMax, 'num')}${f('hpCur', 'Тек. хиты', cr.hpCur, 'num')}</div>
+      <div class="grid2">${f('acText', 'Доспех (пояснение)')}${f('hpFormula', 'Формула хитов')}</div>
       ${f('speed', 'Скорость')}
+      ${f('meta', 'Размер, тип, мировоззрение')}
       <div class="grid3">${ABIL_KEYS.map((k) => f('ab_' + k, ABILITIES.find(([a]) => a === k)[1], cr.abilities[k], 'num')).join('')}</div>
-      <label class="field"><span>Заметки</span><textarea name="notes" style="min-height:90px">${esc(cr.notes || '')}</textarea></label>
+
+      <h4 class="cr-sec">Свойства</h4>
+      <div id="crProps">${(cr.props || []).map(propRow).join('')}</div>
+      <button type="button" class="btn small" id="crAddProp">＋ Свойство</button>
+
+      <h4 class="cr-sec">Особенности, действия и прочее</h4>
+      <div class="rte-bar cr-rte-bar" id="crRteBar">
+        ${RTE_TOOLS.filter(([cmd]) => !['h3', 'blockquote'].includes(cmd)).map(([cmd, label, title]) => `<button type="button" data-cmd="${cmd}" title="${title}" aria-label="${title}">${label}</button>`).join('')}
+      </div>
+      <div id="crSecs">${(cr.sections || []).map(secRow).join('')}</div>
+      <button type="button" class="btn small" id="crAddSec">＋ Раздел</button>
+
+      <label class="field" style="margin-top:14px"><span>Заметки</span><textarea name="notes" style="min-height:90px">${esc(cr.notes || '')}</textarea></label>
       <button class="btn primary block" type="submit">Сохранить</button>
     </form>`);
-  $('#crForm').onsubmit = (e) => {
+
+  const form = $('#crForm');
+  const addHtml = (box, html) => {
+    const t = document.createElement('div');
+    t.innerHTML = html.trim();
+    const el = t.firstElementChild;
+    box.appendChild(el);
+    return el;
+  };
+  $('#crAddProp').onclick = () => addHtml($('#crProps'), propRow()).querySelector('input').focus();
+  $('#crAddSec').onclick = () => addHtml($('#crSecs'), secRow({ title: '', html: '' })).querySelector('input').focus();
+  form.addEventListener('click', (e) => {
+    const del = e.target.closest('[data-del-row]');
+    if (!del) return;
+    const row = del.closest('.cr-prop, .cr-secedit');
+    if (row.classList.contains('cr-secedit') && row.querySelector('.cr-sb').textContent.trim() && !confirm('Удалить раздел вместе с текстом?')) return;
+    row.remove();
+  });
+
+  // форматирование в текстах разделов: кнопки действуют на последний редактор, где стоял курсор
+  let lastEd = null;
+  form.addEventListener('focusin', (e) => {
+    if (e.target.classList?.contains('cr-sb')) lastEd = e.target;
+  });
+  const bar = $('#crRteBar');
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('[data-cmd]')) e.preventDefault();
+  });
+  bar.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-cmd]');
+    if (!b) return;
+    // редактор, где сейчас выделение (кнопка не забирает фокус), или тот, где был курсор
+    const anchor = getSelection().anchorNode;
+    const ed = (anchor && (anchor.nodeType === 1 ? anchor : anchor.parentElement)?.closest('.cr-sb')) || lastEd;
+    if (!ed || !form.contains(ed)) return toast('Сначала поставьте курсор в текст раздела');
+    lastEd = ed;
+    if (document.activeElement !== ed) ed.focus();
+    document.execCommand(b.dataset.cmd);
+  });
+  form.addEventListener('paste', (e) => {
+    if (!e.target.closest?.('.cr-sb')) return;
+    const html = e.clipboardData.getData('text/html');
+    const text = e.clipboardData.getData('text/plain');
     e.preventDefault();
-    const fd = new FormData(e.target);
+    if (html) document.execCommand('insertHTML', false, sanitizeHtml(html));
+    else document.execCommand('insertText', false, text);
+  });
+
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
     const num = (k, d) => { const n = parseInt(fd.get(k), 10); return Number.isNaN(n) ? d : n; };
-    const data = { ...cr, name: String(fd.get('name')).trim() || 'Существо', role: String(fd.get('role')).trim(),
-      ac: num('ac', cr.ac), hpMax: Math.max(1, num('hpMax', cr.hpMax)), speed: String(fd.get('speed')).trim(),
-      notes: String(fd.get('notes') || ''), abilities: { ...cr.abilities } };
+    const str = (k) => String(fd.get(k) || '').trim();
+    const data = { ...cr, name: str('name') || 'Существо', role: str('role'),
+      ac: num('ac', cr.ac), acText: str('acText'), hpMax: Math.max(1, num('hpMax', cr.hpMax)), hpFormula: str('hpFormula'),
+      speed: str('speed'), meta: str('meta'), notes: String(fd.get('notes') || ''), abilities: { ...cr.abilities } };
     data.hpCur = clamp(num('hpCur', cr.hpCur), 0, data.hpMax);
     for (const k of ABIL_KEYS) data.abilities[k] = clamp(num('ab_' + k, cr.abilities[k]), 1, 30);
+    data.props = [...form.querySelectorAll('.cr-prop')]
+      .map((r) => ({ label: r.querySelector('.cr-pl').value.trim(), value: r.querySelector('.cr-pv').value.trim() }))
+      .filter((p) => p.label || p.value);
+    data.sections = [...form.querySelectorAll('.cr-secedit')]
+      .map((r) => ({ title: r.querySelector('.cr-st').value.trim() || 'Раздел', html: sanitizeHtml(r.querySelector('.cr-sb').innerHTML).trim() }))
+      .filter((sec) => sec.html.replace(/<[^>]+>/g, '').trim());
+    // помечаем, что текст правили вручную — «Обновить» с dnd.su спросит, прежде чем затереть
+    if (!isNew && (JSON.stringify(data.props) !== JSON.stringify(cr.props || []) || JSON.stringify(data.sections) !== JSON.stringify(cr.sections || []))) {
+      data.edited = true;
+    }
     if (isNew) return addCreature(data);
     const c = char();
     c.creatures[c.creatures.findIndex((x) => x.id === cr.id)] = data;
