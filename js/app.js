@@ -1,6 +1,7 @@
 import { load, save, uid, newCharacter, normalizeCharacter, exportJson, importJson, requestPersistence } from './store.js';
 import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js';
-import { fetchSpell } from './import.js';
+import { fetchSpell, fetchCreature } from './import.js';
+import { emptyCreature, parseCreatureText, ABIL_KEYS } from './creature.js';
 import { sanitizeHtml } from './richtext.js';
 import { downloadLss } from './export.js';
 import { buildPages, savePdf, spellStats, PAGE_W } from './sheet.js';
@@ -13,7 +14,7 @@ import {
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v19'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v20'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -335,7 +336,194 @@ function renderTracker() {
         ${c.resources.length ? `<button class="btn link small" data-action="toggle-edit-res">${ui.editRes ? 'Готово' : '✎'}</button>` : ''}
         <button class="btn link small" data-action="add-res">＋</button></h3>
       ${resHtml}
+    </div>
+
+    <div class="card">
+      <h3>Существа <span class="spacer"></span><button class="btn link small" data-action="add-creature">＋</button></h3>
+      ${(c.creatures || []).length ? c.creatures.map((cr) => `
+        <div class="res">
+          <div class="info" data-action="open-creature" data-id="${cr.id}">
+            <div class="name">${esc(cr.name)}</div>
+            <span class="badge">${esc([cr.role, `КД ${cr.ac}`].filter(Boolean).join(' · '))}</span>
+            <div class="cr-bar"><div style="width:${Math.max(0, Math.min(100, (cr.hpCur / (cr.hpMax || 1)) * 100))}%"></div></div>
+          </div>
+          <button class="btn icon" data-action="cr-dmg" data-id="${cr.id}" aria-label="Урон">−</button>
+          <div class="val" data-action="cr-hp" data-id="${cr.id}">${cr.hpCur}<small>/${cr.hpMax}</small>${cr.hpTemp ? `<small class="tmp">+${cr.hpTemp}</small>` : ''}</div>
+          <button class="btn icon" data-action="cr-heal" data-id="${cr.id}" aria-label="Лечение">＋</button>
+        </div>`).join('') : '<div class="muted small">Фамильяры, призванные существа, спутники: бес, псевдодракон, оживлённые доспехи… Можно загрузить с dnd.su.</div>'}
     </div>`;
+}
+
+/* --- существа --- */
+
+const findCreature = (id) => (char().creatures || []).find((x) => x.id === id);
+
+function creatureBlock(cr) {
+  const props = [
+    ['Класс доспеха', `${cr.ac}${cr.acText ? ` (${cr.acText})` : ''}`],
+    ['Хиты', `${cr.hpMax}${cr.hpFormula ? ` (${cr.hpFormula})` : ''}`],
+    ['Скорость', cr.speed],
+    ...(cr.props || []).map((p) => [p.label, p.value]),
+  ].filter(([, v]) => v);
+  return `
+    ${cr.meta ? `<div class="hint" style="margin-top:-6px">${esc(cr.meta)}</div>` : ''}
+    <div class="cr-hp">
+      <button class="btn solid-danger" data-cr="dmg">− Урон</button>
+      <div class="cr-hp-v" data-cr="set"><b>${cr.hpCur}</b> / ${cr.hpMax}${cr.hpTemp ? ` <span class="tmp">+${cr.hpTemp}</span>` : ''}<span class="small muted">хиты</span></div>
+      <button class="btn ok" data-cr="heal">＋ Лечение</button>
+    </div>
+    <div class="row" style="justify-content:center;margin-bottom:6px"><button class="btn link small" data-cr="temp">Временные хиты</button></div>
+    <div class="abil-grid cr-abils">
+      ${ABIL_KEYS.map((k) => `<div class="abil"><span class="abil-name">${ABILITIES.find(([a]) => a === k)[1]}</span>
+        <span class="abil-mod">${fmtMod(mod(cr.abilities[k]))}</span><span class="abil-score">${cr.abilities[k]}</span></div>`).join('')}
+    </div>
+    <dl class="props">${props.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+    ${(cr.sections || []).map((sec) => `<h4 class="cr-sec">${esc(sec.title)}</h4><div class="desc cr-desc">${sanitizeHtml(sec.html)}</div>`).join('')}
+    ${cr.notes ? `<h4 class="cr-sec">Заметки</h4><div class="desc">${esc(cr.notes).replace(/\n/g, '<br>')}</div>` : ''}`;
+}
+
+function openCreature(id) {
+  const cr = findCreature(id);
+  if (!cr) return;
+  openSheet(`
+    <h2>${esc(cr.name)}<button class="btn icon x" data-action="close">×</button></h2>
+    ${cr.role || cr.nameEn ? `<div class="small muted" style="margin:-8px 0 8px">${esc([cr.role, cr.nameEn].filter(Boolean).join(' · '))}</div>` : ''}
+    ${creatureBlock(cr)}
+    <div class="spell-actions" style="margin-top:14px">
+      <button class="btn small" data-cr="edit">✎ Изменить</button>
+      ${cr.url ? `<button class="btn small" data-cr="refresh">↻ Обновить</button>
+        <a class="btn small" href="${esc(cr.url)}" target="_blank" rel="noopener">dnd.su ↗</a>` : ''}
+      <button class="btn small danger" data-cr="del">Удалить</button>
+    </div>`);
+  const again = () => { commit(); openCreature(id); };
+  const on = (k, fn) => { const b = sheet.querySelector(`[data-cr=${k}]`); if (b) b.onclick = fn; };
+  on('dmg', () => askNumber(`Урон: ${cr.name}`, '', (n) => { damageCreature(cr, n); again(); }));
+  on('heal', () => askNumber(`Лечение: ${cr.name}`, '', (n) => { cr.hpCur = Math.min(cr.hpMax, cr.hpCur + n); again(); }));
+  on('set', () => askNumber(`Хиты: ${cr.name}`, cr.hpCur, (n) => { cr.hpCur = clamp(n, 0, cr.hpMax); again(); }));
+  on('temp', () => askNumber(`Временные хиты: ${cr.name}`, cr.hpTemp || 0, (n) => { cr.hpTemp = Math.max(0, n); again(); }));
+  on('edit', () => openCreatureForm(cr));
+  on('del', () => {
+    if (!confirm(`Удалить «${cr.name}»?`)) return;
+    const c = char();
+    c.creatures = c.creatures.filter((x) => x.id !== id);
+    closeSheet();
+    commit();
+  });
+  on('refresh', async () => {
+    toast('Загрузка с dnd.su…');
+    try {
+      const fresh = await fetchCreature(cr.url, state.settings.customProxy);
+      // блок статистики — с сайта; текущие хиты, роль, имя и заметки — свои
+      const keep = { id: cr.id, role: cr.role, notes: cr.notes, hpCur: Math.min(cr.hpCur, fresh.hpMax), hpTemp: cr.hpTemp };
+      Object.assign(cr, fresh, keep);
+      toast(`«${cr.name}» обновлено`);
+      again();
+    } catch (e) {
+      toast(e.message);
+    }
+  });
+}
+
+function damageCreature(cr, n) {
+  const fromTemp = Math.min(cr.hpTemp || 0, n);
+  cr.hpTemp = (cr.hpTemp || 0) - fromTemp;
+  cr.hpCur = Math.max(0, cr.hpCur - (n - fromTemp));
+}
+
+function addCreature(cr) {
+  const c = char();
+  cr.id = uid();
+  c.creatures = [...(c.creatures || []), cr];
+  commit();
+  toast(`«${cr.name}» добавлено`);
+  openCreature(cr.id);
+}
+
+function openAddCreature(mode = 'link') {
+  openSheet(`
+    <h2>Добавить существо<button class="btn icon x" data-action="close">×</button></h2>
+    <div class="seg">
+      <button data-mode="link" class="${mode === 'link' ? 'active' : ''}">По ссылке</button>
+      <button data-mode="text" class="${mode === 'text' ? 'active' : ''}">Текст</button>
+      <button data-mode="manual">Вручную</button>
+    </div>
+    <label class="field"><span>Кто это для персонажа</span><input type="text" id="crRole" value="Фамильяр" placeholder="Фамильяр, призванное существо, спутник…"></label>
+    <div id="crBody"></div>`);
+  const role = () => $('#crRole').value.trim();
+  sheet.querySelectorAll('.seg button').forEach((b) => (b.onclick = () => {
+    if (b.dataset.mode === 'manual') return openCreatureForm(null, role());
+    sheet.querySelectorAll('.seg button').forEach((x) => x.classList.toggle('active', x === b));
+    body(b.dataset.mode);
+  }));
+  function body(m) {
+    const box = $('#crBody');
+    if (m === 'link') {
+      box.innerHTML = `
+        <input type="url" id="crUrl" placeholder="https://dnd.su/bestiary/84-imp/">
+        <div class="hint">Ссылка на существо из бестиария dnd.su или next.dnd.su.</div>
+        <div id="crErr"></div>
+        <button class="btn primary block" id="crGo">Загрузить</button>`;
+      $('#crGo').onclick = async () => {
+        const btn = $('#crGo');
+        btn.disabled = true;
+        btn.textContent = 'Загрузка…';
+        try {
+          const cr = await fetchCreature($('#crUrl').value, state.settings.customProxy);
+          cr.role = role();
+          addCreature(cr);
+        } catch (e) {
+          $('#crErr').innerHTML = `<div class="err">${esc(e.message)}</div>${e.details ? `<div class="hint">${esc(e.details)}</div>` : ''}`;
+          btn.disabled = false;
+          btn.textContent = 'Загрузить';
+        }
+      };
+    } else {
+      box.innerHTML = `
+        <div class="hint">Скопируйте блок статистики существа (от названия до действий) и вставьте сюда.</div>
+        <textarea id="crText" placeholder="Бес [Imp]&#10;Крошечное исчадие (дьявол), законно-злое&#10;Класс Доспеха 13&#10;Хиты 10 (3к4 + 3)&#10;…"></textarea>
+        <button class="btn primary block" id="crParse" style="margin-top:10px">Разобрать</button>`;
+      $('#crParse').onclick = () => {
+        const raw = $('#crText').value;
+        if (!raw.trim()) return;
+        const cr = parseCreatureText(raw);
+        cr.role = role();
+        addCreature(cr);
+      };
+    }
+  }
+  body(mode);
+}
+
+function openCreatureForm(cr, role = 'Фамильяр') {
+  const isNew = !cr;
+  cr = cr || { ...emptyCreature(), role };
+  const f = (k, label, v = cr[k], type = 'text') => `<label class="field"><span>${label}</span><input type="text" ${type === 'num' ? 'inputmode="numeric" autocomplete="off"' : ''} name="${k}" value="${esc(v ?? '')}"></label>`;
+  openSheet(`
+    <h2>${isNew ? 'Новое существо' : 'Изменить существо'}<button class="btn icon x" data-action="close">×</button></h2>
+    <form id="crForm">
+      ${f('name', 'Название')}
+      ${f('role', 'Кто это для персонажа')}
+      <div class="grid3">${f('ac', 'КД', cr.ac, 'num')}${f('hpMax', 'Макс. хиты', cr.hpMax, 'num')}${f('hpCur', 'Тек. хиты', cr.hpCur, 'num')}</div>
+      ${f('speed', 'Скорость')}
+      <div class="grid3">${ABIL_KEYS.map((k) => f('ab_' + k, ABILITIES.find(([a]) => a === k)[1], cr.abilities[k], 'num')).join('')}</div>
+      <label class="field"><span>Заметки</span><textarea name="notes" style="min-height:90px">${esc(cr.notes || '')}</textarea></label>
+      <button class="btn primary block" type="submit">Сохранить</button>
+    </form>`);
+  $('#crForm').onsubmit = (e) => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const num = (k, d) => { const n = parseInt(fd.get(k), 10); return Number.isNaN(n) ? d : n; };
+    const data = { ...cr, name: String(fd.get('name')).trim() || 'Существо', role: String(fd.get('role')).trim(),
+      ac: num('ac', cr.ac), hpMax: Math.max(1, num('hpMax', cr.hpMax)), speed: String(fd.get('speed')).trim(),
+      notes: String(fd.get('notes') || ''), abilities: { ...cr.abilities } };
+    data.hpCur = clamp(num('hpCur', cr.hpCur), 0, data.hpMax);
+    for (const k of ABIL_KEYS) data.abilities[k] = clamp(num('ab_' + k, cr.abilities[k]), 1, 30);
+    if (isNew) return addCreature(data);
+    const c = char();
+    c.creatures[c.creatures.findIndex((x) => x.id === cr.id)] = data;
+    commit();
+    openCreature(cr.id);
+  };
 }
 
 function loadCard(c) {
@@ -1410,6 +1598,11 @@ const actions = {
     commit();
   },
 
+  'add-creature': () => openAddCreature(),
+  'open-creature': (d) => openCreature(d.id),
+  'cr-dmg': (d) => { const cr = findCreature(d.id); askNumber(`Урон: ${cr.name}`, '', (n) => { damageCreature(cr, n); commit(); }); },
+  'cr-heal': (d) => { const cr = findCreature(d.id); askNumber(`Лечение: ${cr.name}`, '', (n) => { cr.hpCur = Math.min(cr.hpMax, cr.hpCur + n); commit(); }); },
+  'cr-hp': (d) => { const cr = findCreature(d.id); askNumber(`Хиты: ${cr.name}`, cr.hpCur, (n) => { cr.hpCur = clamp(n, 0, cr.hpMax); commit(); }); },
   'add-res': () => openResForm(),
   'edit-res': (d) => openResForm(char().resources.find((r) => r.id === d.id)),
   'toggle-edit-res': () => { ui.editRes = !ui.editRes; render(); },
@@ -1430,6 +1623,7 @@ const actions = {
       for (const l in c.slots) c.slots[l].used = 0;
       c.pact.used = 0;
       c.resources.forEach((r) => { if (r.reset !== 'none') r.cur = r.max; });
+      (c.creatures || []).forEach((cr) => { cr.hpCur = cr.hpMax; cr.hpTemp = 0; });
       c.spells.forEach((s) => { if (s.freeReset !== 'none') s.freeUsed = 0; });
       const hd = restoreHitDice(c);
       toast(`Длинный отдых завершён${hd ? `, костей хитов восстановлено: ${hd}` : ''}`);

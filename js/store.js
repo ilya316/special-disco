@@ -49,6 +49,7 @@ export function newCharacter(name = 'Новый персонаж') {
     speed: 30,
     inspiration: false,
     spellAbility: '',
+    creatures: [],
     bio: {
       race: '', background: '', alignment: '', age: '', height: '', weight: '', eyes: '', skin: '', hair: '',
       appearance: '', backstory: '', traits: '', ideals: '', bonds: '', flaws: '',
@@ -88,6 +89,7 @@ export function normalizeCharacter(c) {
     coins: { ...base.coins, ...c.coins },
     notes: c.notes || '',
     bio: { ...base.bio, ...c.bio },
+    creatures: c.creatures || [],
     prof: { ...base.prof, ...c.prof },
     notesHtml: typeof c.notesHtml === 'string' ? c.notesHtml : textToHtml(c.notes || ''),
   };

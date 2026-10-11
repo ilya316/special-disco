@@ -362,3 +362,18 @@ button.level-head { width: calc(100% - 4px); background: none; border: 0; paddin
 
 .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 8px; }
 textarea.autogrow { min-height: 0; resize: none; overflow: hidden; }
+
+/* существа */
+.cr-bar { height: 4px; background: var(--card-2); border-radius: 99px; overflow: hidden; margin-top: 5px; max-width: 160px; }
+.cr-bar div { height: 100%; background: var(--ok); }
+.res .val small.tmp, .cr-hp .tmp { color: var(--temp); }
+.cr-hp { display: grid; grid-template-columns: 1fr 1.1fr 1fr; gap: 8px; align-items: center; margin: 6px 0; }
+.cr-hp .btn { padding: 0 6px; white-space: nowrap; }
+.cr-hp-v { text-align: center; font-size: 18px; cursor: pointer; display: flex; flex-direction: column; line-height: 1.15; }
+.cr-hp-v b { font-size: 26px; }
+.cr-abils { margin: 6px 0 10px; }
+.cr-abils .abil { padding: 4px 2px; }
+.cr-abils .abil-mod { font-size: 20px; }
+.cr-sec { margin: 14px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
+.cr-desc p { margin: 0 0 8px; }
+.cr-desc ul { margin: 4px 0 8px; padding-left: 20px; }
