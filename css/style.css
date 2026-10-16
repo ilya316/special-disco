@@ -385,3 +385,15 @@ textarea.autogrow { min-height: 0; resize: none; overflow: hidden; }
 .cr-secedit .cr-st { font-weight: 700; }
 .cr-secedit .rte { min-height: 90px; }
 .cr-rte-bar { position: sticky; top: -16px; z-index: 3; margin: 0 0 6px; padding: 6px 0; }
+
+/* памятка «футы ↔ метры» */
+.hdr-btn { flex: none; border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 3px 8px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.memo-conv { display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
+.memo-conv input { font-size: 20px; font-weight: 700; text-align: center; }
+.memo-eq { font-size: 20px; color: var(--muted); padding-top: 8px; }
+.memo-t { width: 100%; border-collapse: collapse; margin: 4px 0 10px; text-align: center; }
+.memo-t th { font-size: 12px; color: var(--muted); font-weight: 600; padding: 4px; }
+.memo-t td { padding: 5px 4px; border-top: 1px solid var(--line); }
+.memo-t td:nth-child(3) { font-weight: 700; }
+.memo-l { margin: 0 0 12px; padding-left: 18px; font-size: 14px; }
+.memo-l li { margin-bottom: 4px; }

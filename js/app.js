@@ -3,6 +3,7 @@ import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js
 import { fetchSpell, fetchCreature } from './import.js';
 import { emptyCreature, parseCreatureText, ABIL_KEYS } from './creature.js';
 import { sanitizeHtml } from './richtext.js';
+import { withMeters, metersHtml, memoHtml, ftToM, FT_TO_M } from './units.js';
 import { downloadLss } from './export.js';
 import { buildPages, savePdf, spellStats, PAGE_W } from './sheet.js';
 import {
@@ -14,7 +15,7 @@ import {
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v22'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v23'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -28,6 +29,8 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const char = () => state.characters.find((c) => c.id === state.activeId);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const RESET_NAME = { long: 'длинный отдых', short: 'короткий отдых', none: 'вручную' };
+const M = (t) => (state.settings.meters ? withMeters(t) : t);
+const MH = (h) => (state.settings.meters ? metersHtml(h) : h);
 const levelName = (l) => (l === 0 ? 'Заговоры' : `${l} уровень`);
 
 function persist() {
@@ -158,9 +161,9 @@ function spellCard(s) {
       ['Без ячейки', s.freeUnlimited ? 'неограниченно'
         : s.freeMax ? `${s.freeMax - (s.freeUsed || 0)} из ${s.freeMax} (${RESET_NAME[s.freeReset] || ''})` : ''],
     ].filter(([, v]) => v);
-    const paras = (t) => t.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+    const paras = (t) => t.split(/\n{2,}/).map((p) => `<p>${M(esc(p)).replace(/\n/g, '<br>')}</p>`).join('');
     body = `<div class="spell-body">
-      <dl class="props">${props.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+      <dl class="props">${props.map(([k, v]) => `<dt>${k}</dt><dd>${M(esc(v))}</dd>`).join('')}</dl>
       <div class="desc">${paras(s.text || '')}${s.higher ? `<div class="higher">${paras(s.higher)}</div>` : ''}</div>
       <div class="spell-actions">
         ${s.level > 0 ? `<button class="btn primary small" data-action="cast" data-id="${s.id}">✦ Сотворить</button>` : ''}
@@ -176,7 +179,7 @@ function spellCard(s) {
   return `<div class="spell">
     <div class="spell-head" data-action="toggle-spell" data-id="${s.id}">
       ${prep}
-      <div class="title"><div class="name">${esc(s.name)}</div><div class="sub">${esc(sub)}</div></div>
+      <div class="title"><div class="name">${esc(s.name)}</div><div class="sub">${M(esc(sub))}</div></div>
       <div class="tags">${tags}</div>
     </div>${body}</div>`;
 }
@@ -290,7 +293,7 @@ function renderTracker() {
     <div class="combat">
       <button class="combat-tile" data-action="ac"><span class="v">${c.ac}</span><span class="l">КД</span></button>
       <button class="combat-tile" data-action="init"><span class="v">${fmtMod(init)}</span><span class="l">Инициатива</span></button>
-      <button class="combat-tile" data-action="speed"><span class="v">${c.speed}<small> фт.</small></span><span class="l">Скорость</span></button>
+      <button class="combat-tile" data-action="speed"><span class="v">${c.speed}<small> фт.</small></span><span class="l">${state.settings.meters ? `≈ ${ftToM(c.speed)} м` : 'Скорость'}</span></button>
       <button class="combat-tile insp ${c.inspiration ? 'on' : ''}" data-action="inspiration" aria-pressed="${c.inspiration}">
         <span class="v">${c.inspiration ? '★' : '☆'}</span><span class="l">Вдохновение</span></button>
     </div>
@@ -377,8 +380,8 @@ function creatureBlock(cr) {
       ${ABIL_KEYS.map((k) => `<div class="abil"><span class="abil-name">${ABILITIES.find(([a]) => a === k)[1]}</span>
         <span class="abil-mod">${fmtMod(mod(cr.abilities[k]))}</span><span class="abil-score">${cr.abilities[k]}</span></div>`).join('')}
     </div>
-    <dl class="props">${props.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
-    ${(cr.sections || []).map((sec) => `<h4 class="cr-sec">${esc(sec.title)}</h4><div class="desc cr-desc">${sanitizeHtml(sec.html)}</div>`).join('')}
+    <dl class="props">${props.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${M(esc(v))}</dd>`).join('')}</dl>
+    ${(cr.sections || []).map((sec) => `<h4 class="cr-sec">${esc(sec.title)}</h4><div class="desc cr-desc">${MH(sanitizeHtml(sec.html))}</div>`).join('')}
     ${cr.notes ? `<h4 class="cr-sec">Заметки</h4><div class="desc">${esc(cr.notes).replace(/\n/g, '<br>')}</div>` : ''}`;
 }
 
@@ -848,8 +851,8 @@ function renderSheet() {
         <dt>Грузоподъёмность</dt><dd><b>${fmtNum(cap.carry)} фнт.</b> (Сила × 15)</dd>
         <dt>Несёте сейчас</dt><dd><a href="#" data-action="tab" data-tab="inventory">${fmtNum(w.total)} фнт.</a>${w.total > cap.carry ? ' — <span class="err">перегруз</span>' : ''}</dd>
         <dt>Толкать, тянуть</dt><dd>до ${fmtNum(cap.push)} фнт.</dd>
-        <dt>Прыжок в длину</dt><dd>${j.longRun} фт. с разбега · ${j.longStand} фт. с места</dd>
-        <dt>Прыжок в высоту</dt><dd>${j.highRun} фт. с разбега · ${j.highStand} фт. с места</dd>
+        <dt>Прыжок в длину</dt><dd>${M(`${j.longRun} фт. с разбега · ${j.longStand} фт. с места`)}</dd>
+        <dt>Прыжок в высоту</dt><dd>${M(`${j.highRun} фт. с разбега · ${j.highStand} фт. с места`)}</dd>
       </dl>
       <div class="hint">Разбег — не менее 10 фт. перед прыжком. Всё считается от Силы.</div>
     </div>
@@ -1016,6 +1019,7 @@ function renderCharacter() {
 
     <div class="card">
       <h3>Настройки</h3>
+      <label class="check"><input type="checkbox" class="meters-toggle" ${state.settings.meters ? 'checked' : ''}> Показывать метры рядом с футами</label>
       <label class="field"><span>Тема</span>
         <select data-setting="theme">
           ${[['auto', 'Как в системе'], ['dark', 'Тёмная'], ['light', 'Светлая']].map(([v, t]) => `<option value="${v}" ${state.settings.theme === v ? 'selected' : ''}>${t}</option>`).join('')}
@@ -1227,6 +1231,17 @@ function openSheetPreview() {
   };
   window.addEventListener('resize', layout);
   rebuild();
+}
+
+function openUnits() {
+  openSheet(`<h2>Футы ↔ метры<button class="btn icon x" data-action="close">×</button></h2>${memoHtml(state.settings.meters)}`, 'top');
+  const ft = $('#ucFt');
+  const m = $('#ucM');
+  const num = (v) => parseFloat(String(v).replace(',', '.'));
+  const show = (n) => (Number.isFinite(n) ? String(Math.round(n * 100) / 100).replace('.', ',') : '');
+  ft.oninput = () => (m.value = show(num(ft.value) * FT_TO_M));
+  m.oninput = () => (ft.value = show(num(m.value) / FT_TO_M));
+  $('#ucToggle').classList.add('meters-toggle');
 }
 
 function syncIndicator(s) {
@@ -1757,6 +1772,7 @@ const actions = {
     render();
   },
   'sync-connect': () => openConnect(),
+  units: () => openUnits(),
   history: () => openHistory(),
   'sync-now': async () => { await syncNow(); render(); },
   'sync-copy': async () => {
@@ -1809,6 +1825,10 @@ document.addEventListener('change', async (e) => {
     const c = char();
     c[t.dataset.bind] = t.dataset.bind === 'level' ? clamp(parseInt(t.value, 10) || 1, 1, 20) : t.value;
     commit();
+  } else if (t.classList.contains('meters-toggle')) {
+    state.settings.meters = t.checked;
+    save(state);
+    render();
   } else if (t.dataset.sheet) {
     char()[t.dataset.sheet] = t.type === 'checkbox' ? t.checked : t.value;
     commit();
