@@ -1,6 +1,7 @@
 // Cloudflare Worker для «Книги заклинаний»:
 //  GET  /?url=https://dnd.su/spells/… или /bestiary/…  — прокси страниц заклинаний и бестиария dnd.su
 //  POST /sync                          — синхронизация персонажей между устройствами (база D1)
+//  GET/POST /ping                      — проверка связи (ответ/приём заданного размера)
 // Отвечает только своим сайтам — это не открытый прокси.
 const ALLOWED_ORIGINS = [
   'https://ilya316.github.io',
@@ -27,12 +28,24 @@ export default {
     const url = new URL(request.url);
     try {
       if (url.pathname === '/sync') return await sync(request, env, cors);
+      if (url.pathname === '/ping') return await ping(request, url, cors);
       return await proxy(url, cors);
     } catch (e) {
       return json({ error: String(e.message || e) }, 500, cors);
     }
   },
 };
+
+// Проверка связи из приложения: GET /ping?size=N — ответ из N байт, POST /ping — размер принятого тела
+async function ping(request, url, cors) {
+  const headers = { ...cors, 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' };
+  if (request.method === 'POST') {
+    const body = await request.text();
+    return new Response(String(body.length), { headers });
+  }
+  const size = Math.max(1, Math.min(200000, parseInt(url.searchParams.get('size'), 10) || 100));
+  return new Response('x'.repeat(size), { headers });
+}
 
 function json(data, status, cors) {
   return new Response(JSON.stringify(data), {
