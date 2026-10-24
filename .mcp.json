@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "spellbook": {
+      "command": "node",
+      "args": ["tools/mcp/server.mjs"]
+    }
+  }
+}

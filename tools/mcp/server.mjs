@@ -5,6 +5,8 @@
 // Логика — общая с приложением: js/actions.js (игровые действия), js/store.js, js/parser.js, js/creature.js, js/export.js.
 import './dom.mjs';
 import fs from 'node:fs/promises';
+import https from 'node:https';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -40,31 +42,84 @@ async function syncCode() {
   }
 }
 
+// Провайдер «замедляет» Cloudflare: соединение зависает, если за него передано больше ~16 КБ.
+// Поэтому: каждый запрос — через новое соединение (agent: false), данные — сжатыми кусками по 6 КБ,
+// при сбое — повтор.
+function postOnce(body, timeout = 15000) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(SYNC_URL);
+    const payload = Buffer.from(JSON.stringify(body));
+    const req = https.request({
+      hostname: u.hostname, path: u.pathname, method: 'POST', agent: false, timeout,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': payload.length, Connection: 'close' },
+    }, (res) => {
+      const parts = [];
+      res.on('data', (d) => parts.push(d));
+      res.on('error', reject);
+      res.on('end', () => {
+        const text = Buffer.concat(parts).toString('utf8');
+        try {
+          resolve({ status: res.statusCode, data: JSON.parse(text) });
+        } catch {
+          reject(new Error(`ответ сервера оборван (${text.length} Б)`));
+        }
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error(`нет ответа за ${timeout / 1000} с`)));
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
+
 async function cloud(body, code) {
   code = code || (await syncCode());
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 20000);
-  try {
-    const r = await fetch(SYNC_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...body, code }),
-      signal: ctrl.signal,
-    });
-    const data = await r.json().catch(() => ({}));
-    if (r.status === 409 && data.conflict) return data;
-    if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
-    return data;
-  } catch (e) {
-    if (e.name === 'AbortError') throw new Error('Сервер синхронизации не ответил за 20 секунд');
-    throw e;
-  } finally {
-    clearTimeout(timer);
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const { status, data } = await postOnce({ ...body, code });
+      if (status === 409 && data.conflict) return data;
+      if (status >= 400) throw Object.assign(new Error(data.error || 'HTTP ' + status), { fatal: status < 500 });
+      return data;
+    } catch (e) {
+      if (e.fatal) throw e;
+      lastErr = e;
+      await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+    }
   }
+  throw new Error(`Нет связи с сервером синхронизации: ${lastErr.message}`);
+}
+
+const gunzipJson = (b64) => JSON.parse(zlib.gunzipSync(Buffer.from(b64, 'base64')).toString('utf8'));
+
+// Прочитать сжатые данные кусками: state — текущая версия, history — версия rev из истории
+async function readBlob(kind, rev, code) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const meta = await cloud({ blob: kind, ...(kind === 'history' ? { rev } : {}) }, code);
+    if (meta.existed === false) return { existed: false, rev: 0 };
+    const parts = [];
+    let changed = false;
+    for (let i = 0; i < meta.chunks; i++) {
+      const part = await cloud({ blob: kind, rev: meta.rev, index: i }, code);
+      if (part.conflict) { changed = true; break; } // пока читали, данные изменились — читаем заново
+      parts.push(part.data);
+    }
+    if (changed) continue;
+    return { existed: true, rev: meta.rev, created: meta.created, ...gunzipJson(parts.join('')) };
+  }
+  throw new Error('Данные постоянно меняются, не удаётся прочитать');
+}
+
+// Записать сжатыми кусками; ответ — { ok, rev } или { conflict }
+async function writeState(baseRev, characters) {
+  const z = zlib.gzipSync(JSON.stringify({ characters })).toString('base64');
+  const id = 'up-' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+  const total = Math.ceil(z.length / 6000) || 1;
+  for (let i = 0; i < total; i++) await cloud({ upload: id, index: i, data: z.slice(i * 6000, (i + 1) * 6000) });
+  return cloud({ put: true, baseRev, uploadId: id, total, lite: true });
 }
 
 async function readAll() {
-  const r = await cloud({ peek: true });
+  const r = await readBlob('state');
   if (!r.existed) throw new Error('По этому коду синхронизации данных нет');
   return { characters: (r.characters || []).map(normalizeCharacter), rev: r.rev };
 }
@@ -74,7 +129,7 @@ async function mutate(fn) {
   for (let attempt = 0; attempt < 4; attempt++) {
     const { characters, rev } = await readAll();
     const result = await fn(characters);
-    const res = await cloud({ put: true, baseRev: rev, characters });
+    const res = await writeState(rev, characters);
     if (res.conflict) continue;
     return result;
   }
@@ -207,7 +262,7 @@ const ENTRY = z.string().describe('Название (можно часть) ил
 tool('set_sync_code', 'Указать код синхронизации (из приложения: имя персонажа → «Синхронизация»). Проверяет код и сохраняет его локально.',
   { code: z.string() }, async ({ code }) => {
     const c = normalizeCode(code);
-    const r = await cloud({ peek: true }, c);
+    const r = await readBlob('state', undefined, c);
     if (!r.existed) throw new Error('По этому коду данных нет — проверьте код');
     await fs.writeFile(CODE_FILE, c + '\n', 'utf8');
     return `Код сохранён. Персонажей в облаке: ${(r.characters || []).length}.`;
@@ -453,13 +508,13 @@ tool('list_versions', 'История версий в облаке (послед
   return (r.versions || []).map((v, i) => `rev ${v.rev} — ${new Date(v.created).toLocaleString('ru-RU')}${i === 0 ? ' (текущая)' : ''}: ${v.chars.map((c) => `${c.name} (${c.items} вещ., ${c.spells} закл.)`).join('; ')}`).join('\n') || 'История пуста';
 });
 tool('get_version', 'Посмотреть версию из истории: сводка по персонажам (или full=true — JSON).', { rev: z.number(), full: z.boolean().optional() }, async ({ rev, full }) => {
-  const v = await cloud({ historyRev: rev });
+  const v = await readBlob('history', rev);
   const chars = (v.characters || []).map(normalizeCharacter);
   return full ? JSON.stringify(chars, null, 2) : `Версия ${rev} от ${new Date(v.created).toLocaleString('ru-RU')}\n\n${chars.map(summary).join('\n\n')}`;
 });
 tool('restore_version', 'Вернуть всех персонажей к версии из истории (станет новой текущей на всех устройствах). Нужно confirm=true. Текущее состояние останется в истории.',
   { rev: z.number(), confirm: z.literal(true) }, async ({ rev }) => {
-    const v = await cloud({ historyRev: rev });
+    const v = await readBlob('history', rev);
     const restored = (v.characters || []).map(normalizeCharacter);
     return mutate((chars) => {
       chars.splice(0, chars.length, ...restored);

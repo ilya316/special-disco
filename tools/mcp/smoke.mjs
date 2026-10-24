@@ -13,9 +13,34 @@ const SYNC = 'https://special-disco.ilyabondar2o0o0o3.workers.dev/sync';
 const A = 'abcdefghjkmnpqrstuvwxyz23456789';
 const code = Array.from(crypto.getRandomValues(new Uint8Array(20)), (b) => A[b % A.length]).join('').match(/.{4}/g).join('-');
 
-const post = async (body) => (await fetch(SYNC, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, code }) })).json();
+import https from 'node:https';
+// тестовый клиент тоже обходит «замедление»: новое соединение на каждый запрос, только маленькие запросы
+const post = (body) => new Promise((resolve, reject) => {
+  const u = new URL(SYNC);
+  const data = Buffer.from(JSON.stringify({ ...body, code, lite: true }));
+  const req = https.request({ hostname: u.hostname, path: u.pathname, method: 'POST', agent: false, timeout: 15000,
+    headers: { 'Content-Type': 'application/json', 'Content-Length': data.length, Connection: 'close' } }, (res) => {
+    const parts = []; res.on('data', (d) => parts.push(d)); res.on('end', () => resolve(JSON.parse(Buffer.concat(parts).toString('utf8'))));
+  });
+  req.on('timeout', () => req.destroy(new Error('timeout'))); req.on('error', reject); req.end(data);
+});
+import zlib from 'node:zlib';
+// чтение и запись кусками — как в server.mjs
+async function readState() {
+  const meta = await post({ blob: 'state' });
+  const parts = [];
+  for (let i = 0; i < meta.chunks; i++) parts.push((await post({ blob: 'state', rev: meta.rev, index: i })).data);
+  return { rev: meta.rev, ...JSON.parse(zlib.gunzipSync(Buffer.from(parts.join(''), 'base64')).toString('utf8')) };
+}
+async function writeState(baseRev, characters) {
+  const z = zlib.gzipSync(JSON.stringify({ characters })).toString('base64');
+  const id = 'up-smoke-' + Math.random().toString(36).slice(2, 10);
+  const total = Math.ceil(z.length / 6000) || 1;
+  for (let i = 0; i < total; i++) await post({ upload: id, index: i, data: z.slice(i * 6000, (i + 1) * 6000) });
+  return post({ put: true, baseRev, uploadId: id, total });
+}
 // тестовое облако с одним персонажем
-await post({ put: true, baseRev: 0, characters: [{ id: 'seed1', name: 'Затравка' }] });
+await writeState(0, [{ id: 'seed1', name: 'Затравка' }]);
 
 const client = new Client({ name: 'smoke', version: '1.0.0' });
 await client.connect(new StdioClientTransport({ command: 'node', args: [path.join(HERE, 'server.mjs')], env: { ...process.env, SPELLBOOK_SYNC_CODE: code } }));
@@ -59,11 +84,11 @@ const lss = JSON.parse(await fs.readFile(lssPath, 'utf8'));
 console.log(`     LSS: jsonType=${lss.jsonType}, Магия isProf=${JSON.parse(lss.data).skills.arcana.isProf}`);
 
 // конфликт: кто-то записал между чтением и записью — сервер должен перечитать и сохранить обе правки
-const before = await post({ peek: true });
+const before = await readState();
 const chars = before.characters.map((c) => (c.name === 'Затравка' ? { ...c, name: 'Затравка (правка с телефона)' } : c));
-await post({ put: true, baseRev: before.rev, characters: chars });
+await writeState(before.rev, chars);
 await call('update_character', { character: 'Элара', patch: { level: 6 } }, /6 ур/);
-const after = await post({ peek: true });
+const after = await readState();
 const both = after.characters.some((c) => c.name === 'Затравка (правка с телефона)') && after.characters.find((c) => c.name === 'Элара').level === 6;
 console.log(`${both ? 'OK  ' : 'FAIL'} обе правки сохранились (телефон + Claude)`);
 if (!both) fails++;
@@ -75,7 +100,13 @@ await call('restore_version', { rev: firstRev, confirm: true }, /Восстан�
 await call('list_characters', {}, /Затравка/);
 await call('create_character', { name: 'Временный' }, /Создан/);
 await call('delete_character', { character: 'Временный', confirm: true }, /Удалён/);
-await call('get_character', { character: 'нет-такого' }).catch(() => {});
+// ожидаемая ошибка: несуществующий персонаж
+{
+  const r = await client.callTool({ name: 'get_character', arguments: { character: 'нет-такого' } });
+  const good = r.isError && /Не найдено/.test(r.content[0].text);
+  console.log(`${good ? 'OK  ' : 'FAIL'} ошибка для несуществующего персонажа`);
+  if (!good) fails++;
+}
 
 await client.close();
 console.log(fails ? `\nПРОВАЛОВ: ${fails}` : '\nВсё прошло.');
