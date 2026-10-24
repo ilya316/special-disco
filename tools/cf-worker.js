@@ -44,7 +44,11 @@ async function ping(request, url, cors) {
     return new Response(String(body.length), { headers });
   }
   const size = Math.max(1, Math.min(200000, parseInt(url.searchParams.get('size'), 10) || 100));
-  return new Response('x'.repeat(size), { headers });
+  // случайные символы — такой ответ не сжимается при передаче, и его размер честный
+  const bytes = crypto.getRandomValues(new Uint8Array(Math.ceil(size * 0.75) + 3));
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return new Response(btoa(bin).slice(0, size), { headers: { ...headers, 'Content-Encoding': 'identity' } });
 }
 
 function json(data, status, cors) {
