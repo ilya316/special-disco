@@ -1,1 +1,4 @@
 .claude/
+tools/mcp/node_modules/
+tools/mcp/sync-code.txt
+*-lss.json

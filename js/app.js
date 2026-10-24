@@ -4,19 +4,20 @@ import { fetchSpell, fetchCreature } from './import.js';
 import { emptyCreature, parseCreatureText, ABIL_KEYS } from './creature.js';
 import { sanitizeHtml } from './richtext.js';
 import { diagTests, runTest, verdict, reportText } from './diag.js';
+import * as act from './actions.js';
 import { withMeters, metersHtml, memoHtml, ftToM, FT_TO_M } from './units.js';
 import { downloadLss } from './export.js';
 import { buildPages, savePdf, spellStats, PAGE_W } from './sheet.js';
 import {
   ABILITIES, ABIL_SHORT, SKILLS, SIZES, COINS, COIN_NAME, mod, fmtMod, profBonus, skillBonus, saveBonus,
-  capacity, jumps, carried, coinsTotal, itemsValue, fmtNum, restoreHitDice,
+  capacity, jumps, carried, coinsTotal, itemsValue, fmtNum,
 } from './rules.js';
 import {
   initSync, schedule, syncNow, syncInfo, createSync, connect, disconnect, normalizeCode,
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v25'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v26'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -402,9 +403,9 @@ function openCreature(id) {
   const again = () => { commit(); openCreature(id); };
   const on = (k, fn) => { const b = sheet.querySelector(`[data-cr=${k}]`); if (b) b.onclick = fn; };
   on('dmg', () => askNumber(`Урон: ${cr.name}`, '', (n) => { damageCreature(cr, n); again(); }));
-  on('heal', () => askNumber(`Лечение: ${cr.name}`, '', (n) => { cr.hpCur = Math.min(cr.hpMax, cr.hpCur + n); again(); }));
-  on('set', () => askNumber(`Хиты: ${cr.name}`, cr.hpCur, (n) => { cr.hpCur = clamp(n, 0, cr.hpMax); again(); }));
-  on('temp', () => askNumber(`Временные хиты: ${cr.name}`, cr.hpTemp || 0, (n) => { cr.hpTemp = Math.max(0, n); again(); }));
+  on('heal', () => askNumber(`Лечение: ${cr.name}`, '', (n) => { act.creatureHeal(cr, n); again(); }));
+  on('set', () => askNumber(`Хиты: ${cr.name}`, cr.hpCur, (n) => { act.creatureSetHp(cr, { cur: n }); again(); }));
+  on('temp', () => askNumber(`Временные хиты: ${cr.name}`, cr.hpTemp || 0, (n) => { act.creatureSetHp(cr, { temp: n }); again(); }));
   on('edit', () => openCreatureForm(cr));
   on('del', () => {
     if (!confirm(`Удалить «${cr.name}»?`)) return;
@@ -429,11 +430,7 @@ function openCreature(id) {
   });
 }
 
-function damageCreature(cr, n) {
-  const fromTemp = Math.min(cr.hpTemp || 0, n);
-  cr.hpTemp = (cr.hpTemp || 0) - fromTemp;
-  cr.hpCur = Math.max(0, cr.hpCur - (n - fromTemp));
-}
+const damageCreature = (cr, n) => act.creatureDamage(cr, n);
 
 function addCreature(cr) {
   const c = char();
@@ -1516,23 +1513,13 @@ function openCast(spell) {
   sheet.querySelectorAll('[data-cast]').forEach((b) => (b.onclick = () => {
     const k = b.dataset.cast;
     closeSheet();
-    if (k === 'ritual') return toast(`${spell.name}: ритуал (+10 минут)`);
-    if (k === 'nocost') return toast(`${spell.name}: сотворено без ячейки`);
-    if (k === 'free-reset') {
-      spell.freeUsed = 0;
-      toast(`${spell.name}: бесплатные использования восстановлены`);
-      return commit();
+    const how = /^\d+$/.test(k) ? (opts[Number(k)].kind === 'pact' ? 'pact' : String(opts[Number(k)].l)) : k;
+    try {
+      toast(act.castSpell(c, spell, how).text);
+    } catch (e) {
+      return toast(e.message);
     }
-    if (k === 'free') {
-      spell.freeUsed = (spell.freeUsed || 0) + 1;
-      toast(`${spell.name}: бесплатно, осталось ${spell.freeMax - spell.freeUsed}`);
-      return commit();
-    }
-    const o = opts[Number(k)];
-    if (o.kind === 'pact') c.pact.used++;
-    else c.slots[o.l].used++;
-    toast(`${spell.name}: потрачена ячейка ${o.l} ур.`);
-    commit();
+    if (how !== 'ritual' && how !== 'nocost') commit();
   }));
 }
 
@@ -1658,43 +1645,33 @@ const actions = {
   dmg: () => {
     const v = hpInput();
     if (v === null) return toast('Введите число');
-    const hp = char().hp;
-    const fromTemp = Math.min(hp.temp, v);
-    hp.temp -= fromTemp;
-    hp.cur = Math.max(0, hp.cur - (v - fromTemp));
+    act.damage(char(), v);
     commit();
   },
   heal: () => {
     const v = hpInput();
     if (v === null) return toast('Введите число');
-    const c = char();
-    if (c.hp.cur === 0 && v > 0) c.deathSaves = { ok: 0, fail: 0 };
-    c.hp.cur = Math.min(c.hp.max, c.hp.cur + v);
+    act.heal(char(), v);
     commit();
   },
   temp: () => {
     const v = hpInput();
-    if (v === null) return askNumber('Временные хиты', char().hp.temp, (n) => { char().hp.temp = Math.max(0, n); commit(); });
-    char().hp.temp = v;
+    if (v === null) return askNumber('Временные хиты', char().hp.temp, (n) => { act.setTempHp(char(), n); commit(); });
+    act.setTempHp(char(), v);
     commit();
   },
-  'temp-clear': () => { char().hp.temp = 0; commit(); },
-  'hp-max': () => askNumber('Максимум хитов', char().hp.max, (n) => {
-    const hp = char().hp;
-    hp.max = Math.max(1, n);
-    hp.cur = Math.min(hp.cur, hp.max);
-    commit();
-  }),
-  'hp-set': () => askNumber('Текущие хиты', char().hp.cur, (n) => { const hp = char().hp; hp.cur = clamp(n, 0, hp.max); commit(); }),
+  'temp-clear': () => { act.setTempHp(char(), 0); commit(); },
+  'hp-max': () => askNumber('Максимум хитов', char().hp.max, (n) => { act.setHp(char(), { max: n }); commit(); }),
+  'hp-set': () => askNumber('Текущие хиты', char().hp.cur, (n) => { act.setHp(char(), { cur: n }); commit(); }),
   death: (d) => {
     const ds = char().deathSaves;
     const i = Number(d.i);
-    ds[d.k] = ds[d.k] > i ? i : i + 1;
+    act.setDeathSaves(char(), d.k, ds[d.k] > i ? i : i + 1);
     commit();
   },
 
-  slot: (d) => { const s = char().slots[d.l]; s.used = clamp(s.used + (d.full === '1' ? 1 : -1), 0, s.max); commit(); },
-  pact: (d) => { const p = char().pact; p.used = clamp(p.used + (d.full === '1' ? 1 : -1), 0, p.max); commit(); },
+  slot: (d) => { act.useSlot(char(), d.l, d.full === '1' ? 1 : -1); commit(); },
+  pact: (d) => { act.usePact(char(), d.full === '1' ? 1 : -1); commit(); },
   'toggle-edit-slots': () => { ui.editSlots = !ui.editSlots; render(); },
   'slot-max': (d) => { const s = char().slots[d.l]; s.max = clamp(s.max + Number(d.d), 0, 9); s.used = Math.min(s.used, s.max); commit(); },
   'pact-max': (d) => { const p = char().pact; p.max = clamp(p.max + Number(d.d), 0, 9); p.used = Math.min(p.used, p.max); commit(); },
@@ -1715,12 +1692,8 @@ const actions = {
     const c = char();
     const h = c.hitDice[d.i];
     if (h.used >= h.max) return;
-    const m = mod(c.abilities.con);
     askNumber(`Сколько выпало на к${h.die}?`, '', (roll) => {
-      const healed = Math.max(0, roll + m);
-      h.used++;
-      c.hp.cur = Math.min(c.hp.max, c.hp.cur + healed);
-      toast(`к${h.die}: ${roll} ${m >= 0 ? '+' : '−'} ${Math.abs(m)} = ${healed} хитов`);
+      toast(act.spendHitDie(c, Number(d.i), roll).text);
       commit();
     });
   },
@@ -1752,37 +1725,26 @@ const actions = {
   'add-creature': () => openAddCreature(),
   'open-creature': (d) => openCreature(d.id),
   'cr-dmg': (d) => { const cr = findCreature(d.id); askNumber(`Урон: ${cr.name}`, '', (n) => { damageCreature(cr, n); commit(); }); },
-  'cr-heal': (d) => { const cr = findCreature(d.id); askNumber(`Лечение: ${cr.name}`, '', (n) => { cr.hpCur = Math.min(cr.hpMax, cr.hpCur + n); commit(); }); },
-  'cr-hp': (d) => { const cr = findCreature(d.id); askNumber(`Хиты: ${cr.name}`, cr.hpCur, (n) => { cr.hpCur = clamp(n, 0, cr.hpMax); commit(); }); },
+  'cr-heal': (d) => { const cr = findCreature(d.id); askNumber(`Лечение: ${cr.name}`, '', (n) => { act.creatureHeal(cr, n); commit(); }); },
+  'cr-hp': (d) => { const cr = findCreature(d.id); askNumber(`Хиты: ${cr.name}`, cr.hpCur, (n) => { act.creatureSetHp(cr, { cur: n }); commit(); }); },
   'add-res': () => openResForm(),
   'edit-res': (d) => openResForm(char().resources.find((r) => r.id === d.id)),
   'toggle-edit-res': () => { ui.editRes = !ui.editRes; render(); },
-  res: (d) => { const r = char().resources.find((x) => x.id === d.id); r.cur = clamp(r.cur + Number(d.d), 0, r.max); commit(); },
-  'res-dot': (d) => { const r = char().resources.find((x) => x.id === d.id); r.cur = clamp(r.cur + (d.full === '1' ? -1 : 1), 0, r.max); commit(); },
+  res: (d) => { const c = char(); act.resourceDelta(c, c.resources.find((x) => x.id === d.id), Number(d.d)); commit(); },
+  'res-dot': (d) => { const c = char(); act.resourceDelta(c, c.resources.find((x) => x.id === d.id), d.full === '1' ? -1 : 1); commit(); },
   'res-set': (d) => {
-    const r = char().resources.find((x) => x.id === d.id);
-    askNumber(r.name, r.cur, (n) => { r.cur = clamp(n, 0, r.max); commit(); });
+    const c = char();
+    const r = c.resources.find((x) => x.id === d.id);
+    askNumber(r.name, r.cur, (n) => { act.resourceSet(c, r, n); commit(); });
   },
 
   rest: (d) => {
     const c = char();
     if (d.kind === 'long') {
       if (!confirm('Длинный отдых: восстановить хиты, кости хитов, ячейки и ресурсы?')) return;
-      c.hp.cur = c.hp.max;
-      c.hp.temp = 0;
-      c.deathSaves = { ok: 0, fail: 0 };
-      for (const l in c.slots) c.slots[l].used = 0;
-      c.pact.used = 0;
-      c.resources.forEach((r) => { if (r.reset !== 'none') r.cur = r.max; });
-      (c.creatures || []).forEach((cr) => { cr.hpCur = cr.hpMax; cr.hpTemp = 0; });
-      c.spells.forEach((s) => { if (s.freeReset !== 'none') s.freeUsed = 0; });
-      const hd = restoreHitDice(c);
-      toast(`Длинный отдых завершён${hd ? `, костей хитов восстановлено: ${hd}` : ''}`);
+      toast(act.longRest(c).text);
     } else {
-      c.pact.used = 0;
-      c.resources.forEach((r) => { if (r.reset === 'short') r.cur = r.max; });
-      c.spells.forEach((s) => { if (s.freeReset === 'short') s.freeUsed = 0; });
-      toast('Короткий отдых: восстановлены ячейки колдуна и ресурсы короткого отдыха');
+      toast(act.shortRest(c).text);
     }
     commit();
   },

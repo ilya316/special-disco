@@ -1,0 +1,17 @@
+{
+  "name": "spellbook-mcp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "MCP-сервер «Книги заклинаний»: Claude читает и меняет персонажей через облако синхронизации",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs",
+    "smoke": "node smoke.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "linkedom": "^0.18.0",
+    "zod": "^3.25.0"
+  }
+}
