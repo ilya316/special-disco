@@ -54,13 +54,28 @@ export function normalizeCode(code) {
   return String(code || '').toLowerCase().replace(/[^a-z0-9]/g, '').match(/.{1,4}/g)?.join('-') || '';
 }
 
+const REQUEST_TIMEOUT = 20000;
+
 async function post(body, code = cfg.code) {
-  const r = await fetch(SYNC_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, code }),
-  });
-  const data = await r.json().catch(() => ({}));
+  // без ограничения по времени повисший запрос держал синхронизацию «синей» бесконечно
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT);
+  let r;
+  let data;
+  try {
+    r = await fetch(SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, code }),
+      signal: ctrl.signal,
+    });
+    data = await r.json().catch(() => ({}));
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('сервер синхронизации не отвечает (нет связи с Cloudflare?)');
+    throw new Error('нет связи с сервером синхронизации');
+  } finally {
+    clearTimeout(timer);
+  }
   if (r.status === 409 && data.conflict) return data;
   if (!r.ok) throw new Error(data.error || 'HTTP ' + r.status);
   return data;
