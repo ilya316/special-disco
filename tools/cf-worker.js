@@ -2,6 +2,7 @@
 //  GET  /?url=https://dnd.su/spells/… или /bestiary/…  — прокси страниц заклинаний и бестиария dnd.su
 //  POST /sync                          — синхронизация персонажей между устройствами (база D1)
 //  GET/POST /ping                      — проверка связи (ответ/приём заданного размера)
+//  /sync: blob/upload                  — чтение и запись сжатыми кусками по 6 КБ (обход «замедления» Cloudflare)
 // Отвечает только своим сайтам — это не открытый прокси.
 const ALLOWED_ORIGINS = [
   'https://ilya316.github.io',
@@ -114,7 +115,46 @@ async function ensureTable(db) {
     await db.prepare('ALTER TABLE states ADD COLUMN rev INTEGER NOT NULL DEFAULT 0').run();
   } catch {} // колонка уже есть
   await db.prepare('CREATE TABLE IF NOT EXISTS history (code TEXT NOT NULL, rev INTEGER NOT NULL, data TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (code, rev))').run();
+  await db.prepare('CREATE TABLE IF NOT EXISTS uploads (id TEXT NOT NULL, idx INTEGER NOT NULL, data TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (id, idx))').run();
   tableReady = true;
+}
+
+/* ---------- порционная передача ----------
+   Некоторые провайдеры «замедляют» Cloudflare: соединение зависает, если за него передано больше ~16 КБ.
+   Поэтому большие данные можно читать и писать сжатыми (gzip → base64) кусками по CHUNK символов,
+   каждый — отдельным маленьким запросом. */
+const CHUNK = 6000;
+
+async function gzipB64(str) {
+  const stream = new Blob([str]).stream().pipeThrough(new CompressionStream('gzip'));
+  const buf = new Uint8Array(await new Response(stream).arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+
+async function gunzipB64(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return new Response(stream).text();
+}
+
+// сжатые данные последней запрошенной версии — чтобы не сжимать заново на каждый кусок
+const packedCache = new Map();
+async function packed(key, str) {
+  if (!packedCache.has(key)) {
+    packedCache.clear();
+    packedCache.set(key, await gzipB64(str));
+  }
+  return packedCache.get(key);
+}
+
+function blobPart(z, index, extra, cors) {
+  const chunks = Math.ceil(z.length / CHUNK);
+  if (index === undefined || index === null) return json({ ...extra, chunks, length: z.length }, 200, cors);
+  return json({ ...extra, index, data: z.slice(index * CHUNK, (index + 1) * CHUNK) }, 200, cors);
 }
 
 const HISTORY_KEEP = 50;
@@ -149,10 +189,47 @@ async function sync(request, env, cors) {
     return json({ characters: stored.characters || [], rev, existed: !!row }, 200, cors);
   }
 
+  // чтение кусками: без index — сведения (сколько кусков), с index — кусок сжатых данных
+  if (body.blob === 'state') {
+    if (!row) return json({ existed: false, rev: 0, chunks: 0, length: 0 }, 200, cors);
+    if (body.rev !== undefined && body.rev !== rev) return json({ conflict: true, rev }, 409, cors);
+    return blobPart(await packed(`${body.code}:s:${rev}`, row.data), body.index, { existed: true, rev }, cors);
+  }
+  if (body.blob === 'history') {
+    const h = await db.prepare('SELECT data, created FROM history WHERE code = ? AND rev = ?').bind(body.code, body.rev).first();
+    if (!h) return json({ error: 'Версия не найдена' }, 404, cors);
+    return blobPart(await packed(`${body.code}:h:${body.rev}`, h.data), body.index, { rev: body.rev, created: h.created }, cors);
+  }
+
+  // запись кусками: сначала куски (upload), потом put с uploadId
+  if (body.upload) {
+    if (!/^[a-z0-9-]{8,40}$/.test(body.upload) || typeof body.data !== 'string' || body.data.length > CHUNK * 2) {
+      return json({ error: 'Неверный кусок' }, 400, cors);
+    }
+    const now = Date.now();
+    await db.batch([
+      db.prepare('INSERT OR REPLACE INTO uploads (id, idx, data, created) VALUES (?, ?, ?, ?)').bind(body.upload, body.index | 0, body.data, now),
+      db.prepare('DELETE FROM uploads WHERE created < ?').bind(now - 3600e3),
+    ]);
+    return json({ ok: true }, 200, cors);
+  }
+
   if (body.put) {
-    if (!Array.isArray(body.characters)) return json({ error: 'Нет данных' }, 400, cors);
+    let characters = body.characters;
+    if (body.uploadId) {
+      const { results } = await db.prepare('SELECT idx, data FROM uploads WHERE id = ? ORDER BY idx').bind(body.uploadId).all();
+      if (results.length !== body.total || results.some((r, i) => r.idx !== i)) {
+        return json({ error: `Получено кусков ${results.length} из ${body.total}` }, 400, cors);
+      }
+      characters = JSON.parse(await gunzipB64(results.map((r) => r.data).join(''))).characters;
+      await db.prepare('DELETE FROM uploads WHERE id = ?').bind(body.uploadId).run();
+    }
+    if (!Array.isArray(characters)) return json({ error: 'Нет данных' }, 400, cors);
+    body.characters = characters;
+    // lite: не присылать данные в ответе о конфликте (клиент перечитает кусками)
+    const conflictBody = (chars, r) => (body.lite ? { conflict: true, rev: r, existed: true } : { conflict: true, characters: chars, rev: r, existed: true });
     if (body.baseRev !== rev) {
-      return json({ conflict: true, characters: stored.characters || [], rev, existed: !!row }, 409, cors);
+      return json({ ...conflictBody(stored.characters || [], rev), existed: !!row }, 409, cors);
     }
     const now = Date.now();
     const out = JSON.stringify({ characters: body.characters });
@@ -167,7 +244,7 @@ async function sync(request, env, cors) {
     }
     if (!res.meta.changes) {
       const fresh = await db.prepare('SELECT data, rev FROM states WHERE code = ?').bind(body.code).first();
-      return json({ conflict: true, characters: JSON.parse(fresh.data).characters || [], rev: fresh.rev, existed: true }, 409, cors);
+      return json(conflictBody(JSON.parse(fresh.data).characters || [], fresh.rev), 409, cors);
     }
     await db.batch([
       // предыдущая версия тоже должна быть в истории (данные, записанные до появления истории)
