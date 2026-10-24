@@ -45,7 +45,8 @@ async function ping(request, url, cors) {
   }
   const size = Math.max(1, Math.min(200000, parseInt(url.searchParams.get('size'), 10) || 100));
   // случайные символы — такой ответ не сжимается при передаче, и его размер честный
-  const bytes = crypto.getRandomValues(new Uint8Array(Math.ceil(size * 0.75) + 3));
+  const bytes = new Uint8Array(Math.ceil(size * 0.75) + 3);
+  for (let i = 0; i < bytes.length; i += 65536) crypto.getRandomValues(bytes.subarray(i, i + 65536)); // не больше 64 КБ за раз
   let bin = '';
   for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
   return new Response(btoa(bin).slice(0, size), { headers: { ...headers, 'Content-Encoding': 'identity' } });
