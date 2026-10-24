@@ -3,6 +3,7 @@ import { parseText, emptySpell, findSpellUrl, editionFromUrl } from './parser.js
 import { fetchSpell, fetchCreature } from './import.js';
 import { emptyCreature, parseCreatureText, ABIL_KEYS } from './creature.js';
 import { sanitizeHtml } from './richtext.js';
+import { diagTests, runTest, verdict, reportText } from './diag.js';
 import { withMeters, metersHtml, memoHtml, ftToM, FT_TO_M } from './units.js';
 import { downloadLss } from './export.js';
 import { buildPages, savePdf, spellStats, PAGE_W } from './sheet.js';
@@ -15,7 +16,7 @@ import {
   listVersions, getVersion, restoreCharacters, listBackups, backupLocal,
 } from './sync.js';
 
-const APP_VERSION = 'v24'; // меняйте вместе с VERSION в sw.js
+const APP_VERSION = 'v25'; // меняйте вместе с VERSION в sw.js
 
 let state = load();
 const ui = { tab: 'spells', search: '', filter: 'all', open: new Set(), editSlots: false, editRes: false, editHD: false };
@@ -1048,6 +1049,7 @@ function syncCard() {
       <div class="row wrap">
         <button class="btn primary" data-action="sync-create">Включить</button>
         <button class="btn" data-action="sync-connect">У меня уже есть код</button>
+        <button class="btn" data-action="diag">Проверить связь</button>
       </div>
     </div>`;
   }
@@ -1060,6 +1062,7 @@ function syncCard() {
       <div class="small ${s.status === 'error' ? 'err' : 'muted'}">Состояние: ${SYNC_STATUS[s.status]}${s.error ? ` (${esc(s.error)})` : ''} · последняя: ${time}</div>
       <div class="row wrap" style="margin-top:10px">
         <button class="btn" data-action="sync-now">Синхронизировать</button>
+        <button class="btn" data-action="diag">Проверить связь</button>
         <button class="btn" data-action="sync-copy">Скопировать код</button>
         <button class="btn" data-action="history">История версий</button>
         <button class="btn danger" data-action="sync-off">Отключить</button>
@@ -1242,6 +1245,50 @@ function openUnits() {
   ft.oninput = () => (m.value = show(num(ft.value) * FT_TO_M));
   m.oninput = () => (ft.value = show(num(m.value) / FT_TO_M));
   $('#ucToggle').classList.add('meters-toggle');
+}
+
+async function openDiag() {
+  const tests = diagTests(syncInfo().code);
+  const res = {};
+  openSheet(`
+    <h2>Проверка связи<button class="btn icon x" data-action="close">×</button></h2>
+    <div class="hint">Проверяю по шагам, до чего это устройство достаёт. Каждый шаг — до 10 секунд.</div>
+    <div id="diagList">${tests.map((t) => `<div class="diag-row" data-k="${t.key}"><span class="diag-st">…</span><span class="grow">${esc(t.name)}</span><span class="diag-ms"></span><div class="diag-d"></div></div>`).join('')}</div>
+    <div id="diagVerdict" class="diag-v"></div>
+    <div class="row wrap" style="margin-top:10px">
+      <button class="btn" id="diagCopy" disabled>Скопировать отчёт</button>
+      <button class="btn" id="diagAgain" disabled>Проверить ещё раз</button>
+    </div>`);
+  const run = async () => {
+    $('#diagCopy').disabled = $('#diagAgain').disabled = true;
+    $('#diagVerdict').textContent = '';
+    for (const t of tests) {
+      const row = sheet.querySelector(`.diag-row[data-k="${t.key}"]`);
+      if (!row) return; // окно закрыли
+      row.className = 'diag-row run';
+      row.querySelector('.diag-st').textContent = '⟳';
+      res[t.key] = await runTest(t);
+      const r = res[t.key];
+      if (!sheet.contains(row)) return;
+      row.className = 'diag-row ' + (r.ok ? 'ok' : 'bad');
+      row.querySelector('.diag-st').textContent = r.ok ? '✓' : '✗';
+      row.querySelector('.diag-ms').textContent = `${r.ms} мс`;
+      row.querySelector('.diag-d').textContent = r.detail;
+    }
+    $('#diagVerdict').textContent = verdict(res);
+    $('#diagCopy').disabled = $('#diagAgain').disabled = false;
+  };
+  $('#diagCopy').onclick = async () => {
+    const text = reportText(tests, res, APP_VERSION);
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Отчёт скопирован');
+    } catch {
+      prompt('Скопируйте отчёт:', text);
+    }
+  };
+  $('#diagAgain').onclick = run;
+  run();
 }
 
 function syncIndicator(s) {
@@ -1774,6 +1821,7 @@ const actions = {
   'sync-connect': () => openConnect(),
   units: () => openUnits(),
   history: () => openHistory(),
+  diag: () => openDiag(),
   'sync-now': async () => { await syncNow(); render(); },
   'sync-copy': async () => {
     try {

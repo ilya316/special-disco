@@ -397,3 +397,16 @@ textarea.autogrow { min-height: 0; resize: none; overflow: hidden; }
 .memo-t td:nth-child(3) { font-weight: 700; }
 .memo-l { margin: 0 0 12px; padding-left: 18px; font-size: 14px; }
 .memo-l li { margin-bottom: 4px; }
+
+/* проверка связи */
+.diag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.diag-st { width: 18px; text-align: center; font-weight: 700; color: var(--muted); }
+.diag-row.ok .diag-st { color: var(--ok); }
+.diag-row.bad .diag-st { color: var(--danger); }
+.diag-row.run .diag-st { color: var(--temp); }
+.diag-ms { font-size: 12px; color: var(--muted); }
+.diag-d { width: 100%; padding-left: 26px; font-size: 12px; color: var(--muted); }
+.diag-d:empty { display: none; }
+.diag-row.bad .diag-d { color: var(--danger); }
+.diag-v { margin-top: 12px; padding: 10px; border-radius: 10px; background: var(--card-2); font-size: 14px; }
+.diag-v:empty { display: none; }
