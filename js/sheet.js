@@ -149,12 +149,6 @@ function page1(c) {
       </div>
 
       <div class="sp-col3">
-        <div class="sp-panel sp-persona">
-          ${box('Черты характера', `<div class="sp-fit">${nl(b.traits)}</div>`)}
-          ${box('Идеалы', `<div class="sp-fit">${nl(b.ideals)}</div>`)}
-          ${box('Привязанности', `<div class="sp-fit">${nl(b.bonds)}</div>`)}
-          ${box('Слабости', `<div class="sp-fit">${nl(b.flaws)}</div>`)}
-        </div>
         ${box('Умения и способности', `<div class="sp-fit">${resources}</div>`, 'sp-grow')}
       </div>
     </div>
@@ -175,7 +169,15 @@ function page2(c) {
         ${box('Внешность персонажа', `<div class="sp-fit big">${nl(b.appearance)}</div>`, 'sp-grow')}
         ${box('Прочее снаряжение и сокровища', `<div class="sp-fit">${nl(c.inventory)}</div>`, 'sp-grow')}
       </div>
-      ${box('Предыстория персонажа', `<div class="sp-fit big">${nl(b.backstory)}</div>`, 'sp-p2-right')}
+      <div class="sp-p2-right">
+        <div class="sp-panel sp-persona">
+          ${box('Черты характера', `<div class="sp-fit">${nl(b.traits)}</div>`)}
+          ${box('Идеалы', `<div class="sp-fit">${nl(b.ideals)}</div>`)}
+          ${box('Привязанности', `<div class="sp-fit">${nl(b.bonds)}</div>`)}
+          ${box('Слабости', `<div class="sp-fit">${nl(b.flaws)}</div>`)}
+        </div>
+        ${box('Предыстория персонажа', `<div class="sp-fit big">${nl(b.backstory)}</div>`, 'sp-grow')}
+      </div>
     </div>
     <div class="sp-foot">Книга заклинаний · D&D 5e ${esc(c.edition)}</div>
   </div>`;

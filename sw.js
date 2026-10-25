@@ -1,5 +1,5 @@
 // Офлайн-кэш оболочки приложения. При изменении файлов увеличьте VERSION.
-const VERSION = 'v26';
+const VERSION = 'v27';
 const CACHE = 'spellbook-' + VERSION;
 const FILES = [
   './', 'index.html', 'css/style.css', 'js/app.js', 'js/store.js', 'js/parser.js', 'js/import.js', 'js/rules.js', 'js/sync.js', 'js/richtext.js', 'js/merge.js', 'js/export.js', 'js/sheet.js', 'js/creature.js', 'js/units.js', 'js/diag.js', 'js/actions.js', 'css/sheet.css',

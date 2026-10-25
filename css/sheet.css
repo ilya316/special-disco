@@ -113,12 +113,13 @@
 .sp-coin span { font-size: 7.5px; font-weight: 700; }
 .sp-coin b { font-size: 11px; font-weight: 600; }
 
-.sp-persona { gap: 6px; }
-.sp-persona .sp-box { height: 92px; }
 
 /* ----- страница 2 ----- */
 .sp-p2 { flex: 1; min-height: 0; display: grid; grid-template-columns: 250px 1fr; gap: 12px; padding-bottom: 14px; }
 .sp-p2-left { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.sp-p2-right { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+.sp-persona { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; flex: none; }
+.sp-persona .sp-box { height: 120px; }
 
 /* ----- заметки ----- */
 .sp-notes-box { flex: 1; min-height: 0; margin-bottom: 14px; }
